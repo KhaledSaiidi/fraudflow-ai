@@ -58,7 +58,7 @@ services:
       POSTGRES_DB: airflow
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
-      - ./init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh
+      - ./scripts/init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 10s
@@ -352,7 +352,7 @@ services:
       exit 0;
       "
     volumes:
-      - ./wait-for-it.sh:/tmp/wait-for-it.sh
+      - ./scripts/wait-for-it.sh:/tmp/wait-for-it.sh
     networks:
       - fraud-detection
 
