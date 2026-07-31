@@ -1,28 +1,23 @@
-FROM apache/airflow:3.3.0
+# syntax=docker/dockerfile:1
 
-LABEL maintainer="FraudFlow AI"
-LABEL description="Apache Airflow with custom dependencies for FraudFlow"
+ARG AIRFLOW_VERSION=3.3.0
+ARG PYTHON_VERSION=3.13
 
-USER root
-RUN mkdir -p /app/models && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        curl \
-        build-essential \
-        libssl-dev \
-        libffi-dev \
-        python3-dev \
-        gcc \
-        g++ \
-        git && \
-    rm -rf /var/lib/apt/lists/*
+FROM apache/airflow:${AIRFLOW_VERSION}-python${PYTHON_VERSION}
+
+ARG AIRFLOW_VERSION
+
+LABEL org.opencontainers.image.title="FraudFlow Airflow"
+LABEL org.opencontainers.image.description="FraudFlow orchestration runtime"
 
 USER airflow
 
-COPY requirements.txt /tmp/requirements.txt
+COPY --chown=airflow:0 requirements.txt /tmp/requirements.txt
 
-RUN pip install --no-cache-dir -r /tmp/requirements.txt && \
-    rm /tmp/requirements.txt
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8080/api/v2/monitor/health || exit 1
+RUN umask 0002 \
+    && pip install --no-cache-dir \
+        "apache-airflow==${AIRFLOW_VERSION}" \
+        --constraint "${HOME}/constraints.txt" \
+        --requirement /tmp/requirements.txt \
+    && pip check \
+    && rm /tmp/requirements.txt

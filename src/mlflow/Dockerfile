@@ -1,28 +1,37 @@
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1
 
-LABEL maintainer="FraudFlow AI"
-LABEL description="MLflow server for FraudFlow experiment tracking and model registry"
+FROM python:3.11-slim-bookworm AS builder
 
-WORKDIR /app
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
-# Create non-root user for security
-RUN groupadd -r mlflow && useradd -r -g mlflow mlflow && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
-    rm -rf /var/lib/apt/lists/*
+RUN python -m venv "${VIRTUAL_ENV}"
 
-COPY --chown=mlflow:mlflow requirements.txt /app/
+COPY requirements.txt /tmp/requirements.txt
 
-RUN pip install --no-cache-dir -r /app/requirements.txt && \
-    rm /app/requirements.txt
+RUN pip install --no-cache-dir \
+        --requirement /tmp/requirements.txt \
+    && pip check
 
-# Switch to non-root user
-USER mlflow
+FROM python:3.11-slim-bookworm
 
-EXPOSE 5500
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:${PATH}" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:5500 || exit 1
+RUN groupadd --system --gid 10001 mlflow \
+    && useradd --system --uid 10001 --gid mlflow \
+       --home-dir /nonexistent --shell /usr/sbin/nologin mlflow
+
+COPY --from=builder /opt/venv /opt/venv
+
+USER 10001:10001
+
+EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3).close()"]
 
 ENTRYPOINT ["mlflow"]
-CMD ["server", "--port", "5500", "--host", "0.0.0.0"]
+CMD ["server", "--host=0.0.0.0", "--port=5000"]
