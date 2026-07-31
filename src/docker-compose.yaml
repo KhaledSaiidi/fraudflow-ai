@@ -12,7 +12,7 @@ x-airflow-common:
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql+psycopg2://airflow:airflow@postgres/airflow
     AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
-    AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY}
+    AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY:-gAAAAABnG8rH3kK5vL2mN7pQ0rS9tU4vW5xY8zZ1aB2cD3eF4gH5iJ6kL7mN8oP9q0rS1tU2vW3xY4zZ5aB6cD7e}
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
@@ -55,12 +55,15 @@ services:
       POSTGRES_DB: airflow
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
+      - ./init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 10s
       retries: 5
       start_period: 5s
     restart: always
+    networks:
+      - fraud-detection
 
   redis:
     # Redis is limited to 7.2-bookworm due to licencing change
@@ -75,6 +78,8 @@ services:
       retries: 50
       start_period: 30s
     restart: always
+    networks:
+      - fraud-detection
 
   airflow-apiserver:
     <<: *airflow-common
@@ -92,6 +97,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks:
+      - fraud-detection
 
   airflow-scheduler:
     <<: *airflow-common
@@ -107,6 +114,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks:
+      - fraud-detection
 
   airflow-dag-processor:
     <<: *airflow-common
@@ -122,6 +131,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks:
+      - fraud-detection
 
   airflow-worker:
     <<: *airflow-common
@@ -145,6 +156,11 @@ services:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
+    deploy:
+      mode: replicated
+      replicas: ${AIRFLOW_WORKER_REPLICAS:-2}
+    networks:
+      - fraud-detection
 
   airflow-triggerer:
     <<: *airflow-common
@@ -160,6 +176,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks:
+      - fraud-detection
 
   airflow-init:
     <<: *airflow-common
@@ -252,6 +270,8 @@ services:
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
       _PIP_ADDITIONAL_REQUIREMENTS: ''
     user: "0:0"
+    networks:
+      - fraud-detection
 
   airflow-cli:
     <<: *airflow-common
@@ -267,6 +287,8 @@ services:
       - airflow
     depends_on:
       <<: *airflow-common-depends-on
+    networks:
+      - fraud-detection
 
   # You can enable flower by adding "--profile flower" option e.g. docker-compose --profile flower up
   # or by explicitly targeted on the command line e.g. docker-compose up flower.
@@ -289,6 +311,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks:
+      - fraud-detection
 
   mlflow-server:
     restart: always
@@ -296,18 +320,21 @@ services:
     image: mlflow-server:latest
     container_name: mlflow-server
     depends_on:
-      - mc
-      - postgres
+      postgres:
+        condition: service_healthy
+      mc:
+        condition: service_started
     ports:
       - "5500:5500"
     environment:
       - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-    command: mlflow server --port 5500 --host 0.0.0.0 --backend-store-uri postgresql+psycopg2://mlflow:mlflow@mlflowpostgres/mlflow
+    command: server --backend-store-uri postgresql+psycopg2://mlflow:mlflow@postgres/mlflow --default-artifact-root s3://mlflow
     networks:
       - fraud-detection
 
+# MINIO SERVER
   mc:
     image: minio/mc
     platform: linux/amd64
@@ -328,8 +355,26 @@ services:
     networks:
       - fraud-detection
 
+  minio:
+    image: minio/minio
+    platform: linux/amd64
+    container_name: minio
+    restart: always
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001" --address ":9000"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_USERNAME}
+      - MINIO_ROOT_PASSWORD=${MINIO_PASSWORD}
+    volumes:
+      - minio-data:/data
+    networks:
+      - fraud-detection
+
 volumes:
   postgres-db-volume:
+  minio-data:
 
 networks:
   fraud-detection:
