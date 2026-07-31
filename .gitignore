@@ -388,6 +388,7 @@ mlflow-data/
 docker/secrets/*
 !docker/secrets/.gitkeep
 
+airflow.cfg
 
 # ==============================================================================
 # Database and migration tooling
