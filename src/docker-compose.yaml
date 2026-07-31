@@ -1,4 +1,6 @@
 ---
+name: fraudflow-ai
+
 x-airflow-common:
   &airflow-common
   image: airflow-training:latest
