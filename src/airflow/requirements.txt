@@ -1,0 +1,14 @@
+xgboost
+mlflow
+kafka-python
+python-dotenv
+pyyaml
+catboost
+pyspark
+lightgbm
+liblinear
+pandas
+scikit-learn
+boto3
+tqdm
+tqdm-joblib
