@@ -1,12 +1,16 @@
 import json
 import os
 import signal
+from typing import Any, Dict, Optional
 from confluent_kafka import Producer
 from dotenv import load_dotenv
 import logging
 import random
 from faker import Faker
 import time
+from datetime import datetime, timedelta, timezone
+
+from jsonschema import ValidationError, validate, FormatChecker
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
@@ -18,6 +22,21 @@ logger = logging.getLogger(__name__)
 load_dotenv(dotenv_path="/app/.env")
 
 fake = Faker()
+
+TRANSACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "transaction_id": {"type": "string"},
+        "user_id": {"type": "number", "minimum": 1000, "maximum": 9999},
+        "amount": {"type": "number", "minimum": 0.01, "maximum": 100000},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+        "merchant": {"type": "string"},
+        "timestamp": {"type": "string", "format": "date-time"},
+        "location": {"type": "string","pattern": "^[A-Z]{2}$"},
+        # "is_fraud": {"type": "integer", "minimum": 0, "maximum": 1}
+    },
+    "required": ["transaction_id", "user_id", "amount", "currency", "timestamp"]
+}
 
 class TransactionProducer():
     def __init__(self):
@@ -66,6 +85,95 @@ class TransactionProducer():
         signal.signal(signal.SIGINT, self.shutdown)
         signal.signal(signal.SIGTERM, self.shutdown)
 
+    def delivery_report(self, err, msg):
+        if err is not None:
+            logger.error(f'Message delivery failed: {err}')
+        else:
+            logger.info(f'Message delivered to {msg.topic()} [{msg.partition()}]')
+
+    def validate_transaction(self, transaction: Dict[str, Any]) -> bool:
+        try:
+            validate(
+                instance=transaction,
+                schema=TRANSACTION_SCHEMA,
+                format_checker=FormatChecker()
+            )
+            return True
+        except ValidationError as e:
+            logger.error(f'Invalid  Transaction: {e.message}')
+            return False
+
+    def generate_transaction(self) -> Optional[Dict[str, Any]]:
+        transaction = {
+            'transaction_id': fake.uuid4(),
+            'user_id': random.randint(1000, 9999),
+            'amount': round(fake.pyfloat(min_value=0.01, max_value=10000.0), 2),
+            'currency': 'USD',
+            'merchant': fake.company(),
+            'timestamp': (datetime.now(timezone.utc) + 
+                          timedelta(seconds=random.randint(-300, 3000))).isoformat(),
+            'location': fake.country_code(),
+            'is_fraud': 0
+        }
+        is_fraud = 0
+        amount = transaction['amount']
+        user_id = transaction['user_id']
+        merchant = transaction['merchant']
+        # Account takeover
+        if user_id in self.compromised_users and amount > 500:
+            if random.random() < 0.3: # 30% chance of fraud if user is compromised and amount is high
+                is_fraud = 1
+                transaction['amount'] = random.uniform(500, 5000)
+                transaction['merchant'] = random.choice(self.high_risk_merchants)
+            # Card Testing
+            if not is_fraud and amount < 2.0:
+                # simulate rapid small txns
+                if user_id % 1000 == 0 and random.random() < 0.25:
+                    is_fraud = 1
+                    transaction['amount'] = round(random.uniform(0.01, 2), 2)
+                    transaction['location'] = 'US'
+
+            # Merchant collusion
+            if not is_fraud and merchant in self.high_risk_merchants:
+                if amount > 3000 and random.random() < 0.15:
+                    is_fraud = 1
+                    transaction['amount'] = random.uniform(500, 5000)
+
+            # Geo anomalies
+            if not is_fraud:
+                if user_id % 500 == 0 and random.random() < 0.1:
+                    is_fraud = 1
+                    transaction['location'] = random.choice(['CN', 'RU', 'GB'])
+
+            # Baseline random fraud (0.1 - 0.3%)
+            if not is_fraud and random.random() < 0.002:
+                is_fraud = 1
+                transaction['amount'] = random.uniform(100, 2000)
+
+            # Ensure that final fraud rate is between 1-2%
+            transaction['is_fraud'] = is_fraud if random.random() < 0.985 else 0
+
+            # Validate modified transaction 
+            if self.validate_transaction(transaction):
+                return transaction
+
+    def send_transaction(self) -> bool:
+        try:
+            transaction = self.generate_transaction()
+            if not transaction:
+                return False
+            self.producer.produce(
+                self.topic,
+                key=transaction['transaction_id'],
+                value=json.dumps(transaction),
+                callback=self.delivery_report
+            )
+            self.producer.poll(0) # Trigger callbacks 
+            return True
+        except Exception as e:
+            logger.error(f"Error producing message:: {str(e)}")
+            return False
+
     def run_continuous_production(self, interval: float=0.0):
         """Run Continuous message Production with graceful shutdown"""
         self.running = True
@@ -85,7 +193,6 @@ class TransactionProducer():
 
             if self.producer:
                 self.producer.flush(timeout=30)
-                self.producer.close()
             logger.info('Producer stopped')
 
 if __name__ == "__main__":
