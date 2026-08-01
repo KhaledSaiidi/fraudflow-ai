@@ -1,4 +1,4 @@
 python-dotenv
-faker
+Faker
 jsonschema
-confluent_kafka
+confluent-kafka

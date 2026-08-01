@@ -2,42 +2,29 @@
 
 FROM python:3.11-slim-bookworm
 
-ENV DEBIAN_FRONTEND=noninteractive \
+ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONIOENCODING=UTF-8
+    PYTHONIOENCODING=UTF-8 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:${PATH}"
 
 WORKDIR /app
 
-ARG LIBRDKAFKA_VERSION=2.15.0
+RUN python -m venv "${VIRTUAL_ENV}" \
+    && groupadd --gid 10001 producer \
+    && useradd --uid 10001 --gid producer --no-create-home \
+       --home-dir /nonexistent --shell /usr/sbin/nologin producer
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    curl \
-    gnupg \
-    gcc \
-    g++ \
-    build-essential \
-    python3-dev \
-    libssl-dev \
-    libsasl2-dev \
-    pkg-config \
-    && rm -rf /vat/lib/apt/lists/*
+COPY requirements.txt .
 
-RUN curl -fsSL "https://github.com/confluentinc/librdkafka/archive/refs/tags/v${LIBRDKAFKA_VERSION}.tar.gz" \
-    -o /tmp/librdkafka.tar.gz && \
-    tar -xzf /tmp/librdkafka.tar.gz -C /tmp && \
-    cd "/tmp/librdkafka-${LIBRDKAFKA_VERSION}" && \
-    ./configure --enable-ssl --enable-sasl && \
-    make -j"$(nproc)" && \
-    make install && \
-    ldconfig && \
-    rm -rf \
-    "/tmp/librdkafka-${LIBRDKAFKA_VERSION}" \
-    /tmp/librdkafka.tar.gz \
-    /var/lib/apt/lists/*
+RUN pip install --upgrade pip \
+    && pip install --requirement requirements.txt \
+    && pip check
 
-COPY ./requirements.txt /app/requirements.txt
+COPY main.py .
 
-COPY . .
+USER 10001:10001
 
-ENTRYPOINT [ "python3", "main.py" ]
+ENTRYPOINT ["python", "main.py"]
