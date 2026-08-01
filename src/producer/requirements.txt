@@ -1,0 +1,4 @@
+python-dotenv
+Faker
+jsonschema
+confluent-kafka
