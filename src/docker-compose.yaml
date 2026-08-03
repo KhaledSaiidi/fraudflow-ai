@@ -413,11 +413,23 @@ services:
         INTERNAL://kafka-1:29092,
         EXTERNAL://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: >-
-        INTERNAL:PLAINTEXT,
-        EXTERNAL:PLAINTEXT,
+        INTERNAL:SASL_PLAINTEXT,
+        EXTERNAL:SASL_PLAINTEXT,
         CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+      KAFKA_LISTENER_NAME_INTERNAL_PLAIN_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="${KAFKA_USERNAME:?KAFKA_USERNAME is required}"
+        password="${KAFKA_PASSWORD:?KAFKA_PASSWORD is required}"
+        user_${KAFKA_USERNAME:?KAFKA_USERNAME is required}="${KAFKA_PASSWORD:?KAFKA_PASSWORD is required}";
+      KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="${KAFKA_USERNAME:?KAFKA_USERNAME is required}"
+        password="${KAFKA_PASSWORD:?KAFKA_PASSWORD is required}"
+        user_${KAFKA_USERNAME:?KAFKA_USERNAME is required}="${KAFKA_PASSWORD:?KAFKA_PASSWORD is required}";
       # -------------------------------------------------------
       # KRaft cluster ID
       # Must be identical on all nodes
@@ -462,11 +474,23 @@ services:
         INTERNAL://kafka-2:29092,
         EXTERNAL://localhost:9094
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: >-
-        INTERNAL:PLAINTEXT,
-        EXTERNAL:PLAINTEXT,
+        INTERNAL:SASL_PLAINTEXT,
+        EXTERNAL:SASL_PLAINTEXT,
         CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+      KAFKA_LISTENER_NAME_INTERNAL_PLAIN_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="${KAFKA_USERNAME:?KAFKA_USERNAME is required}"
+        password="${KAFKA_PASSWORD:?KAFKA_PASSWORD is required}"
+        user_${KAFKA_USERNAME:?KAFKA_USERNAME is required}="${KAFKA_PASSWORD:?KAFKA_PASSWORD is required}";
+      KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="${KAFKA_USERNAME:?KAFKA_USERNAME is required}"
+        password="${KAFKA_PASSWORD:?KAFKA_PASSWORD is required}"
+        user_${KAFKA_USERNAME:?KAFKA_USERNAME is required}="${KAFKA_PASSWORD:?KAFKA_PASSWORD is required}";
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
@@ -502,11 +526,23 @@ services:
         INTERNAL://kafka-3:29092,
         EXTERNAL://localhost:9095
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: >-
-        INTERNAL:PLAINTEXT,
-        EXTERNAL:PLAINTEXT,
+        INTERNAL:SASL_PLAINTEXT,
+        EXTERNAL:SASL_PLAINTEXT,
         CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+      KAFKA_LISTENER_NAME_INTERNAL_PLAIN_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="${KAFKA_USERNAME:?KAFKA_USERNAME is required}"
+        password="${KAFKA_PASSWORD:?KAFKA_PASSWORD is required}"
+        user_${KAFKA_USERNAME:?KAFKA_USERNAME is required}="${KAFKA_PASSWORD:?KAFKA_PASSWORD is required}";
+      KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="${KAFKA_USERNAME:?KAFKA_USERNAME is required}"
+        password="${KAFKA_PASSWORD:?KAFKA_PASSWORD is required}"
+        user_${KAFKA_USERNAME:?KAFKA_USERNAME is required}="${KAFKA_PASSWORD:?KAFKA_PASSWORD is required}";
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
@@ -522,8 +558,6 @@ services:
 
   producer-init:
     image: busybox:latest
-    env_file:
-      - ${ENV_FILE_PATH:-.env}
     restart: on-failure
     depends_on:
       - kafka-1

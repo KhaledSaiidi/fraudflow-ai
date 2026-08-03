@@ -47,6 +47,7 @@ class TransactionProducer():
         self.bootstrap_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
         self.kafka_username = os.getenv('KAFKA_USERNAME')
         self.kafka_password = os.getenv('KAFKA_PASSWORD')
+        self.kafka_security_protocol = os.getenv('KAFKA_SECURITY_PROTOCOL', 'SASL_PLAINTEXT')
         self.topic = os.getenv('KAFKA_TOPIC', 'transactions')
         self.topic_partitions = int(os.getenv('KAFKA_TOPIC_PARTITIONS', 6))
         self.topic_replication_factor = int(os.getenv('KAFKA_TOPIC_REPLICATION_FACTOR', 3))
@@ -63,7 +64,7 @@ class TransactionProducer():
 
         if self.kafka_username and self.kafka_password:
             self.producer_config.update({
-                'security.protocol': 'SASL_SSL',
+                'security.protocol': self.kafka_security_protocol,
                 'sasl.mechanism': 'PLAIN',
                 'sasl.username': self.kafka_username,
                 'sasl.password': self.kafka_password,
