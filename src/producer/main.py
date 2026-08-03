@@ -1,3 +1,4 @@
+from importlib.metadata import metadata
 import json
 import os
 import signal
@@ -13,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from jsonschema import ValidationError, validate, FormatChecker
 from confluent_kafka.admin import AdminClient
 from confluent_kafka.cimpl import NewTopic
+from confluent_kafka.cimpl import NewPartitions
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
@@ -90,23 +92,60 @@ class TransactionProducer():
         signal.signal(signal.SIGINT, self.shutdown)
         signal.signal(signal.SIGTERM, self.shutdown)
 
-    def ensure_topic_exists(self):
+    def ensure_topic_exists(self, retries: int = 30, delay: int = 5):
+        startup_jitter = random.uniform(0, 6)
+        logger.info("Waiting %.2fs before Kafka topic setup", startup_jitter)
+        time.sleep(startup_jitter)
+        last_error = None
+        for attempt in range(1, retries + 1):
+            try:
+                self._ensure_topic_exists_once()
+                return
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Attempt {attempt}/{retries} to ensure topic exists failed: {str(e)}")
+                time.sleep(delay)
+        logger.error(f"Failed to ensure topic exists after {retries} attempts: {str(last_error)}")
+        raise RuntimeError(
+            f"Failed to ensure topic {self.topic} exists after {retries} attempts"
+        ) from last_error
+
+    def _ensure_topic_exists_once(self):
         admin = AdminClient(self.producer_config)
         metadata = admin.list_topics(timeout=10)
-        if self.topic in metadata.topics:
-            logger.info("Kafka topic %s already exists", self.topic)
-            return
-        topic = NewTopic(self.topic, self.topic_partitions, self.topic_replication_factor)
-        futures = admin.create_topics([topic])
-        try:
-            futures[self.topic].result()
-            logger.info("Created Kafka topic %s with %d partitions", self.topic, self.topic_partitions)
-        except Exception as e:
-            if "TOPIC_ALREADY_EXISTS" in str(e):
-                logger.info("Kafka topic %s already exists", self.topic)
-            else:
-                logger.error("Failed to create Kafka topic %s: %s", self.topic, e)
+        existing_topic = metadata.topics.get(self.topic)
+        if existing_topic is None:
+            topic = NewTopic(
+                self.topic,
+                self.topic_partitions,
+                self.topic_replication_factor,
+            )
+            futures = admin.create_topics([topic])
+            try:
+                futures[self.topic].result()
+                logger.info("Created Kafka topic %s with %d partitions",self.topic, self.topic_partitions)
+                return
+            except Exception as e:
+                if "TOPIC_ALREADY_EXISTS" in str(e):
+                    logger.info("Kafka topic %s was created by another producer", self.topic)
+                    return
                 raise
+        current_partitions = len(existing_topic.partitions)
+        if current_partitions == self.topic_partitions:
+            logger.info("Kafka topic %s already exists with %d partitions", self.topic, current_partitions)
+            return
+        if current_partitions < self.topic_partitions:
+            futures = admin.create_partitions([
+                NewPartitions(self.topic, self.topic_partitions)
+            ])
+            futures[self.topic].result()
+            logger.info("Increased Kafka topic %s partitions from %d to %d", self.topic, current_partitions, self.topic_partitions)
+            return
+        raise ValueError(
+            f"Kafka topic {self.topic} has {current_partitions} partitions, "
+            f"expected {self.topic_partitions}; Kafka cannot reduce partitions"
+        )
+
 
     def delivery_report(self, err, msg):
         if err is not None:
