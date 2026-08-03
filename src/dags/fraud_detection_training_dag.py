@@ -3,7 +3,8 @@ import logging
 
 from airflow.sdk import DAG
 from airflow.providers.standard.operators.python import PythonOperator
-from airflow.providers.standard.operators.bash import BashOperator
+from airflow.providers.standard.operators.bash import AirflowException, BashOperator
+
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
@@ -27,10 +28,16 @@ def _train_model(**context):
     This function should contain the logic to train the model, including data loading,
     preprocessing, model training, and saving the trained model.
     """
-    logger.info("Starting model training...")
-    pass  # Replace with actual training logic
-    logger.info("Model training completed successfully.")
+    from fraud_detection_training import FraudDetectionTraining
+    try:
+        logger.info("Initializing model training...")
+        trainer = FraudDetectionTraining()
+        return {'status': 'success'}
 
+    except Exception as e:
+        logger.error("Model training failed: %s", str(e), exc_info=True)
+        raise AirflowException(f'Model Training failed: {str(e)}') from e
+    
 with DAG(
     'fraud_detection_training',
     default_args=default_args,

@@ -27,7 +27,7 @@ class FraudDetectionTraining:
 
         access_key = os.getenv("AWS_ACCESS_KEY_ID")
         secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-        endpoint = self.config["MLFLOW"]["S3_ENDPOINT_URL"]
+        endpoint = self.config["mlflow"]["s3_endpoint_url"]
 
         if access_key is None or secret_key is None or endpoint is None:
             raise ValueError("Missing AWS/MLflow configuration")
@@ -38,7 +38,7 @@ class FraudDetectionTraining:
         })
         self._validate_environment()
 
-        mlflow.set_tracking_uri(self.config['mlflow']['tracking_url'])
+        mlflow.set_tracking_uri(self.config['mlflow']['tracking_uri'])
         mlflow.set_experiment(self.config['mlflow']['experiment_name'])
 
 
@@ -68,7 +68,7 @@ class FraudDetectionTraining:
                 aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
             )
             buckets = s3.list_buckets()
-            bucket_names = [b['NAME'] for b in buckets.get('Buckets', [])]
+            bucket_names = [b['Name'] for b in buckets.get('Buckets', [])]
             logger.info('Minio Connection successful. Buckets: %s...', bucket_names)
             mlflow_bucket = self.config['mlflow']['bucket']
             if mlflow_bucket not in bucket_names:
