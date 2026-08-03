@@ -12,3 +12,5 @@ scikit-learn
 boto3
 tqdm
 tqdm-joblib
+apache-airflow
+apache-airflow-providers-standard
