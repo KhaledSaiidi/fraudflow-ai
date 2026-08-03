@@ -383,9 +383,194 @@ services:
     networks:
       - fraud-detection
 
+  kafka-1:
+    image: apache/kafka:4.3.0
+    container_name: kafka-1
+    hostname: kafka-1
+    restart: unless-stopped
+    ports:
+      # External access from the Docker host
+      - "9092:9092"
+    environment:
+      # -------------------------------------------------------
+      # KRaft node configuration
+      # -------------------------------------------------------
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      # All three nodes participate in the controller quorum
+      KAFKA_CONTROLLER_QUORUM_VOTERS: >-
+        1@kafka-1:9093,
+        2@kafka-2:9093,
+        3@kafka-3:9093
+      # -------------------------------------------------------
+      # Listener configuration
+      # -------------------------------------------------------
+      KAFKA_LISTENERS: >-
+        INTERNAL://0.0.0.0:29092,
+        EXTERNAL://0.0.0.0:9092,
+        CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: >-
+        INTERNAL://kafka-1:29092,
+        EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: >-
+        INTERNAL:PLAINTEXT,
+        EXTERNAL:PLAINTEXT,
+        CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # -------------------------------------------------------
+      # KRaft cluster ID
+      # Must be identical on all nodes
+      # -------------------------------------------------------
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      # -------------------------------------------------------
+      # Replication and durability
+      # -------------------------------------------------------
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      # Prevent accidental topic creation with incorrect settings
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # Explicit data location
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+    volumes:
+      - kafka-1-data:/var/lib/kafka/data
+    networks:
+      - fraud-detection
+
+  kafka-2:
+    image: apache/kafka:4.3.0
+    container_name: kafka-2
+    hostname: kafka-2
+    restart: unless-stopped
+    ports:
+      - "9094:9092"
+    environment:
+      KAFKA_NODE_ID: 2
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: >-
+        1@kafka-1:9093,
+        2@kafka-2:9093,
+        3@kafka-3:9093
+      KAFKA_LISTENERS: >-
+        INTERNAL://0.0.0.0:29092,
+        EXTERNAL://0.0.0.0:9092,
+        CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: >-
+        INTERNAL://kafka-2:29092,
+        EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: >-
+        INTERNAL:PLAINTEXT,
+        EXTERNAL:PLAINTEXT,
+        CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+    volumes:
+      - kafka-2-data:/var/lib/kafka/data
+    networks:
+      - fraud-detection
+
+  kafka-3:
+    image: apache/kafka:4.3.0
+    container_name: kafka-3
+    hostname: kafka-3
+    restart: unless-stopped
+    ports:
+      - "9095:9092"
+    environment:
+      KAFKA_NODE_ID: 3
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: >-
+        1@kafka-1:9093,
+        2@kafka-2:9093,
+        3@kafka-3:9093
+      KAFKA_LISTENERS: >-
+        INTERNAL://0.0.0.0:29092,
+        EXTERNAL://0.0.0.0:9092,
+        CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: >-
+        INTERNAL://kafka-3:29092,
+        EXTERNAL://localhost:9095
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: >-
+        INTERNAL:PLAINTEXT,
+        EXTERNAL:PLAINTEXT,
+        CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+    volumes:
+      - kafka-3-data:/var/lib/kafka/data
+    networks:
+      - fraud-detection
+
+  producer-init:
+    image: busybox:latest
+    env_file:
+      - ${ENV_FILE_PATH:-.env}
+    restart: on-failure
+    depends_on:
+      - kafka-1
+      - kafka-2
+      - kafka-3
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        echo "Waiting for Kafka brokers to accept TCP connections..."
+        i=1
+        while [ "$i" -le 30 ]; do
+          if nc -z kafka-1 29092 && nc -z kafka-2 29092 && nc -z kafka-3 29092; then
+            echo "Kafka broker ports are reachable."
+            exit 0
+          fi
+          echo "Waiting for Kafka brokers... ($i/30)"
+          i=$((i + 1))
+          sleep 5
+        done
+        echo "Kafka brokers were not reachable in time."
+        exit 1
+    networks:
+      - fraud-detection
+
+  producer:
+    build: ./producer
+    env_file: .env
+    restart: always
+    depends_on:
+      producer-init:
+        condition: service_completed_successfully
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    networks:
+      - fraud-detection
+
 volumes:
   postgres-db-volume:
   minio-data:
+  kafka-1-data:
+  kafka-2-data:
+  kafka-3-data:
 
 networks:
   fraud-detection:

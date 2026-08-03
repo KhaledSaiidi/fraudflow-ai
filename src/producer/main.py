@@ -11,6 +11,8 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from jsonschema import ValidationError, validate, FormatChecker
+from confluent_kafka.admin import AdminClient
+from confluent_kafka.cimpl import NewTopic
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
@@ -33,9 +35,9 @@ TRANSACTION_SCHEMA = {
         "merchant": {"type": "string"},
         "timestamp": {"type": "string", "format": "date-time"},
         "location": {"type": "string","pattern": "^[A-Z]{2}$"},
-        # "is_fraud": {"type": "integer", "minimum": 0, "maximum": 1}
+        "is_fraud": {"type": "integer", "minimum": 0, "maximum": 1}
     },
-    "required": ["transaction_id", "user_id", "amount", "currency", "timestamp"]
+    "required": ["transaction_id", "user_id", "amount", "currency", "timestamp", "is_fraud"]
 }
 
 class TransactionProducer():
@@ -44,6 +46,8 @@ class TransactionProducer():
         self.kafka_username = os.getenv('KAFKA_USERNAME')
         self.kafka_password = os.getenv('KAFKA_PASSWORD')
         self.topic = os.getenv('KAFKA_TOPIC', 'transactions')
+        self.topic_partitions = int(os.getenv('KAFKA_TOPIC_PARTITIONS', 6))
+        self.topic_replication_factor = int(os.getenv('KAFKA_TOPIC_REPLICATION_FACTOR', 3))
         self.running = False
 
         # confluent kafka producer configuration
@@ -67,7 +71,8 @@ class TransactionProducer():
 
         try:
             self.producer = Producer(self.producer_config)
-            logger.info(f"Connected to Kafka broker at {self.bootstrap_servers}")
+            self.ensure_topic_exists()
+            logger.info(f"Connected to Kafka broker at {self.bootstrap_servers} and topic {self.topic} is ready")
         except Exception as e:
             logger.error(f"Failed to connect to Kafka broker: {str(e)}")
             raise e
@@ -84,6 +89,24 @@ class TransactionProducer():
         # Configure graceful shutdown
         signal.signal(signal.SIGINT, self.shutdown)
         signal.signal(signal.SIGTERM, self.shutdown)
+
+    def ensure_topic_exists(self):
+        admin = AdminClient(self.producer_config)
+        metadata = admin.list_topics(timeout=10)
+        if self.topic in metadata.topics:
+            logger.info("Kafka topic %s already exists", self.topic)
+            return
+        topic = NewTopic(self.topic, self.topic_partitions, self.topic_replication_factor)
+        futures = admin.create_topics([topic])
+        try:
+            futures[self.topic].result()
+            logger.info("Created Kafka topic %s with %d partitions", self.topic, self.topic_partitions)
+        except Exception as e:
+            if "TOPIC_ALREADY_EXISTS" in str(e):
+                logger.info("Kafka topic %s already exists", self.topic)
+            else:
+                logger.error("Failed to create Kafka topic %s: %s", self.topic, e)
+                raise
 
     def delivery_report(self, err, msg):
         if err is not None:
