@@ -7,7 +7,7 @@ mlflow:
   bucket: "mlflow"
 
 kafka:
-  bnootstrap_servers: "kafka-1:29092,kafka-2:29092,kafka-3:29092"
+  bootstrap_servers: "kafka-1:29092,kafka-2:29092,kafka-3:29092"
   username: "kafka-user"
   password: "kafka-1234-password"
   topic: "transactions"
