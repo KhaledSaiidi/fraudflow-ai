@@ -130,6 +130,6 @@ with DAG(
     3. **Cleanup**: Cleans up temporary files after training.
     Daily Training of fraud detection use: 
     - Transactions data from Kafka
-    - XGBoost classifier with precision optimisation
+    - Classifier with precision optimisation
     - MLFLOW for experiment tracking and model versioning
     """
