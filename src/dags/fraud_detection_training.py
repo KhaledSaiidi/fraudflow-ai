@@ -1,7 +1,6 @@
 import logging
 import os
 import boto3
-from cadwyn import endpoint
 from dotenv import load_dotenv
 import mlflow
 import yaml
