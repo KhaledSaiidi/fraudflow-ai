@@ -1,7 +1,5 @@
-xgboost
 mlflow
-kafka-python
-python-dotenv
+confluent-kafka
 pyyaml
 catboost
 pyspark
@@ -14,3 +12,5 @@ tqdm
 tqdm-joblib
 apache-airflow
 apache-airflow-providers-standard
+minio
+pyarrow

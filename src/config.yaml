@@ -1,17 +1,56 @@
 mlflow:
   experiment_name: "fraud_detection_v1"
-  register_model_name: "fraud_detection_xgboost"
+  register_model_name: "fraud_detection"
   tracking_uri: "http://mlflow-server:5500"
-  artifact_location: "s3://mlflow/fraud_detection"
-  s3_endpoint_url: "http://minio:9000"
-  bucket: "mlflow"
+  artifact_path: "fraud_detection"
+
+minio:
+  endpoint: "minio:9000"
+  secure: false
+  buckets:
+    mlflow: "mlflow"
+    transactions: "transactions"
+    fraud_features: "fraud-features"
 
 kafka:
   bootstrap_servers: "kafka-1:29092,kafka-2:29092,kafka-3:29092"
-  username: "kafka-user"
-  password: "kafka-1234-password"
+  security_protocol: "SASL_PLAINTEXT"
+  sasl_mechanism: "PLAIN"
   topic: "transactions"
   output_topic: "fraud_predictions"
+  topic_partitions: 6
+  topic_replication_factor: 3
+  producer:
+    client_id: "transaction-producer"
+    compression_type: "gzip"
+    linger_ms: 5
+    batch_size: 16384
+  consumer:
+    client_id: "transaction-consumer"
+    group_id: "transaction-consumer"
+    auto_offset_reset: "earliest"
+
+ingestion:
+  worker_count: 3
+  max_messages_per_batch: 1000
+  max_run_seconds: 1800
+  max_wait_seconds: 5
+  dedup_shard_count: 3
+
+training_data:
+  lookback_days: 30
+  minimum_rows: 10000
+  label_column: is_fraud
+  dataset_version: v1
+
+airflow:
+  dag:
+    schedule: "0 4 * * *"
+    start_date: "2026-08-01"
+    execution_timeout_minutes: 120
+    retries: 3
+    retry_delay_seconds: 30
+    max_active_runs: 1
 
 # model:
 
@@ -20,4 +59,3 @@ kafka:
 
 
 # spark:
-
