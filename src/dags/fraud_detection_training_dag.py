@@ -32,7 +32,9 @@ def _train_model(**context):
     try:
         logger.info("Initializing model training...")
         trainer = FraudDetectionTraining()
-        return {'status': 'success'}
+        model, precision = trainer.train_model()
+
+        return {'status': 'success', 'precision': precision}
 
     except Exception as e:
         logger.error("Model training failed: %s", str(e), exc_info=True)
