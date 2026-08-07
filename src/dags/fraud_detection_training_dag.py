@@ -99,9 +99,12 @@ with DAG(
         bash_command='''
         echo "Validating environment..."
         test -f /app/config.yaml &&
-        test -f /app/.env &&
+        test -n "$AWS_ACCESS_KEY_ID" &&
+        test -n "$AWS_SECRET_ACCESS_KEY" &&
+        test -n "$KAFKA_USERNAME" &&
+        test -n "$KAFKA_PASSWORD" &&
         echo "Environment validation successful." ||
-        (echo "Environment validation failed. Required files are missing." && exit 1)
+        (echo "Environment validation failed. Configuration or credentials are missing." && exit 1)
         '''
     )
 

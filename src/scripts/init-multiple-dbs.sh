@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-MLFLOW_DB_NAME="${MLFLOW_DB_NAME:-mlflow}"
-MLFLOW_DB_USER="${MLFLOW_DB_USER:-mlflow}"
-MLFLOW_DB_PASSWORD="${MLFLOW_DB_PASSWORD:-mlflow123}"
+: "${MLFLOW_DB_NAME:?MLFLOW_DB_NAME is required}"
+: "${MLFLOW_DB_USER:?MLFLOW_DB_USER is required}"
+: "${MLFLOW_DB_PASSWORD:?MLFLOW_DB_PASSWORD is required}"
 
 psql \
   --set=ON_ERROR_STOP=1 \

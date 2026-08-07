@@ -39,7 +39,6 @@ x-airflow-common:
     - ./plugins:/opt/airflow/plugins
     - ./models:/app/models
     - ./config.yaml:/app/config.yaml
-    - ./.env:/app/.env
   user: "50000:0"
   depends_on:
     &airflow-common-depends-on
