@@ -26,6 +26,18 @@ REQUIRED_TRANSACTION_FIELDS = {
     "currency",
     "timestamp",
     "is_fraud",
+    "ingested_at",
+    "kafka_partition",
+    "kafka_offset",
+    "dedup_shard",
+}
+
+DEDUPLICATION_FIELDS = {
+    "transaction_id",
+    "ingested_at",
+    "kafka_partition",
+    "kafka_offset",
+    "dedup_shard",
 }
 
 class TrainingDataset:
@@ -33,6 +45,9 @@ class TrainingDataset:
         self.minio_endpoint = os.getenv('MINIO_ENDPOINT', 'minio:9000')
         self.minio_access_key = os.getenv('AWS_ACCESS_KEY_ID')
         self.minio_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+        self.dedup_shard_count = int(os.getenv("DEDUP_SHARD_COUNT", "3"))
+        if self.dedup_shard_count < 1:
+            raise ValueError("DEDUP_SHARD_COUNT must be at least 1")
         self.config = self._load_config(config_path)
 
         self.source_bucket = self.config["training_data"]["source_bucket"]
@@ -69,22 +84,26 @@ class TrainingDataset:
 
     @staticmethod
     def _validate_data(table: pa.Table) -> tuple[bool, str]:
-        required_fields = {
-            "transaction_id",
-            "user_id",
-            "amount",
-            "currency",
-            "timestamp",
-            "is_fraud",
-        }
-        missing_fields = required_fields - set(table.column_names)
+        missing_fields = REQUIRED_TRANSACTION_FIELDS - set(table.column_names)
         if missing_fields:
             return False, f"Missing required fields: {missing_fields}"
+
+        null_deduplication_fields = sorted(
+            field
+            for field in DEDUPLICATION_FIELDS
+            if table.column(field).null_count > 0
+        )
+        if null_deduplication_fields:
+            return (
+                False,
+                "Null values in deduplication fields: "
+                f"{null_deduplication_fields}",
+            )
         return True, "Data validation passed"
     
     @staticmethod
     def _deduplicate_data(table: pa.Table) -> tuple[pa.Table, int]:
-        """Deduplicate the data based on transaction_id and timestamp."""
+        """Keep the earliest ingested row for each transaction ID."""
         frame = table.to_pandas()
         rows_before = len(frame)
         frame = frame.sort_values(
@@ -109,15 +128,25 @@ class TrainingDataset:
         self,
         cutoff: datetime,
         lookback_days: int,
+        shard_index: int,
     ) -> tuple[pa.Table, list[str]]:
-        """Get Data as a Parquet object in MinIO."""
+        """Load and globally deduplicate one transaction shard from MinIO."""
+
+        if not 0 <= shard_index < self.dedup_shard_count:
+            raise ValueError(
+                "shard_index must be between 0 and "
+                f"{self.dedup_shard_count - 1}"
+            )
 
         minio_client = self.connect_to_minio()
         start = cutoff - timedelta(days=lookback_days)
         object_names: list[str] = []
         current_date = start.date()
         while current_date <= cutoff.date():
-            prefix = f"event_date={current_date.isoformat()}/"
+            prefix = (
+                f"event_date={current_date.isoformat()}/"
+                f"dedup_shard={shard_index}/"
+            )
             for obj in minio_client.list_objects(
                 self.source_bucket,
                 prefix=prefix,
@@ -128,6 +157,7 @@ class TrainingDataset:
             current_date += timedelta(days=1)
         object_names.sort()
         tables: list[pa.Table] = []
+        loaded_object_names: list[str] = []
         for object_name in object_names:
             response = minio_client.get_object(
                 self.source_bucket,
@@ -137,22 +167,24 @@ class TrainingDataset:
             try:
                 payload = response.read()
                 table = pq.read_table(BytesIO(payload))
-                _validate_data, message = self._validate_data(table)
-                if not _validate_data:
+                is_valid, message = self._validate_data(table)
+                if not is_valid:
                     logger.warning(
                         "Data validation failed for %s: %s",
                         object_name,
                         message,
                     )
                     continue
-                table, deduped_count = self._deduplicate_data(table)
-                if deduped_count > 0:
-                    logger.info(
-                        "Deduplicated %d transactions from %s",
-                        deduped_count,
-                        object_name,
+
+                stored_shards = set(table.column("dedup_shard").to_pylist())
+                if stored_shards != {shard_index}:
+                    raise ValueError(
+                        f"Object {object_name} contains dedup shards "
+                        f"{sorted(stored_shards)}, expected only {shard_index}"
                     )
+
                 tables.append(table)
+                loaded_object_names.append(object_name)
             finally:
                 response.close()
                 response.release_conn()
@@ -173,7 +205,15 @@ class TrainingDataset:
             & (frame["timestamp"] < cutoff)
         ]
         combined = pa.Table.from_pandas(frame, preserve_index=False)
-        return combined, object_names
+        combined, deduped_count = self._deduplicate_data(combined)
+        if deduped_count > 0:
+            logger.info(
+                "Deduplicated %d transactions from shard %d",
+                deduped_count,
+                shard_index,
+            )
+
+        return combined, loaded_object_names
 
     def _write_dataset(self):
         pass

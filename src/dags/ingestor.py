@@ -63,6 +63,9 @@ class TransactionConsumer:
         self.minio_endpoint = os.getenv('MINIO_ENDPOINT', 'minio:9000')
         self.minio_access_key = os.getenv('AWS_ACCESS_KEY_ID')
         self.minio_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+        self.dedup_shard_count = int(os.getenv("DEDUP_SHARD_COUNT", "3"))
+        if self.dedup_shard_count < 1:
+            raise ValueError("DEDUP_SHARD_COUNT must be at least 1")
         self.worker_index = worker_index
         self.worker_count = worker_count
         self.partition_ids = list(
@@ -397,7 +400,9 @@ class TransactionConsumer:
         return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
 
     @staticmethod
-    def get_dedup_shard(transaction_id: str, shard_count: int = 3) -> int:
+    def get_dedup_shard(transaction_id: str, shard_count: int) -> int:
+        if shard_count < 1:
+            raise ValueError("shard_count must be at least 1")
         digest = hashlib.sha256(transaction_id.encode("utf-8")).digest()
         return int.from_bytes(digest[:8], byteorder="big") % shard_count
 
@@ -406,19 +411,25 @@ class TransactionConsumer:
         transactions: list[dict[str, Any]],
         batch_id: str,
     ) -> list[str]:
-        """Write each event-date group to a Parquet object in MinIO."""
+        """Write each event-date and dedup-shard group to MinIO."""
         if not transactions:
             logger.info("No transactions to persist.")
             return []
 
         minio_client = self.connect_to_minio()
         bucket_name = os.getenv('MINIO_BUCKET', 'transactions')
-        transactions_by_date: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        transactions_by_partition: dict[
+            tuple[str, int],
+            list[dict[str, Any]],
+        ] = defaultdict(list)
         for transaction in transactions:
-            transaction["dedup_shard"] = self.get_dedup_shard(
-                transaction["transaction_id"]
+            dedup_shard = self.get_dedup_shard(
+                transaction["transaction_id"],
+                self.dedup_shard_count,
             )
-            transactions_by_date[str(transaction["event_date"])].append(transaction)
+            transaction["dedup_shard"] = dedup_shard
+            partition_key = (str(transaction["event_date"]), dedup_shard)
+            transactions_by_partition[partition_key].append(transaction)
 
         try:
             if not minio_client.bucket_exists(bucket_name):
@@ -426,15 +437,16 @@ class TransactionConsumer:
                 logger.info("Created Minio bucket: %s", bucket_name)
 
             object_names: list[str] = []
-            for event_date, date_transactions in sorted(
-                transactions_by_date.items()
+            for (event_date, dedup_shard), shard_transactions in sorted(
+                transactions_by_partition.items()
             ):
                 object_name = (
                     f"event_date={event_date}/"
+                    f"dedup_shard={dedup_shard}/"
                     f"batch-{batch_id}.parquet"
                 )
                 parquet_stream = BytesIO()
-                table = pa.Table.from_pylist(date_transactions)
+                table = pa.Table.from_pylist(shard_transactions)
                 pq.write_table(table, parquet_stream, compression="snappy")
                 length = parquet_stream.tell()
                 parquet_stream.seek(0)
@@ -449,7 +461,7 @@ class TransactionConsumer:
                 object_names.append(object_name)
                 logger.info(
                     "Persisted %d transactions to s3://%s/%s",
-                    len(date_transactions),
+                    len(shard_transactions),
                     bucket_name,
                     object_name,
                 )
