@@ -396,6 +396,11 @@ class TransactionConsumer:
         )
         return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
 
+    @staticmethod
+    def get_dedup_shard(transaction_id: str, shard_count: int = 3) -> int:
+        digest = hashlib.sha256(transaction_id.encode("utf-8")).digest()
+        return int.from_bytes(digest[:8], byteorder="big") % shard_count
+
     def _persist_transactions(
         self,
         transactions: list[dict[str, Any]],
@@ -410,6 +415,9 @@ class TransactionConsumer:
         bucket_name = os.getenv('MINIO_BUCKET', 'transactions')
         transactions_by_date: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for transaction in transactions:
+            transaction["dedup_shard"] = self.get_dedup_shard(
+                transaction["transaction_id"]
+            )
             transactions_by_date[str(transaction["event_date"])].append(transaction)
 
         try:
