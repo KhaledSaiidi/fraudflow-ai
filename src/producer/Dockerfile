@@ -17,13 +17,14 @@ RUN python -m venv "${VIRTUAL_ENV}" \
     && useradd --uid 10001 --gid producer --no-create-home \
        --home-dir /nonexistent --shell /usr/sbin/nologin producer
 
-COPY requirements.txt .
+COPY producer/requirements.txt .
 
 RUN pip install --upgrade pip \
     && pip install --requirement requirements.txt \
     && pip check
 
-COPY main.py .
+COPY producer/main.py .
+COPY dags/settings.py .
 
 USER 10001:10001
 

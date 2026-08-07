@@ -5,6 +5,8 @@ from airflow.sdk import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.bash import AirflowException, BashOperator
 
+from settings import load_config
+
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
@@ -12,16 +14,24 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
-INGESTION_WORKER_COUNT = 3
+CONFIG = load_config()
+AIRFLOW_CONFIG = CONFIG["airflow"]
+DAG_CONFIG = AIRFLOW_CONFIG["dag"]
+INGESTION_CONFIG = CONFIG["ingestion"]
+INGESTION_WORKER_COUNT = int(INGESTION_CONFIG["worker_count"])
 
 default_args = {
     'owner': 'fraud_detection_team.com',
     'depends_on_past': False,
-    'start_date': datetime(2026, 8, 1),
+    'start_date': datetime.fromisoformat(DAG_CONFIG["start_date"]),
     'email_on_failure': False,
-    'execution_timeout': timedelta(minutes=120),
-    "retries": 3,
-    "retry_delay": timedelta(seconds=30),
+    'execution_timeout': timedelta(
+        minutes=int(DAG_CONFIG["execution_timeout_minutes"])
+    ),
+    "retries": int(DAG_CONFIG["retries"]),
+    "retry_delay": timedelta(
+        seconds=int(DAG_CONFIG["retry_delay_seconds"])
+    ),
 }
 
 def _train_model(**context):
@@ -55,16 +65,15 @@ def _ingest_transactions(
     from ingestor import TransactionConsumer
 
     consumer = TransactionConsumer(
-        client_id=f"airflow-ingestor-{consumer_index}",
+        client_id=(
+            f"{CONFIG['kafka']['consumer']['client_id']}-{consumer_index}"
+        ),
         worker_index=consumer_index,
         worker_count=consumer_count,
     )
 
     try:
-        result = consumer.consume_available(
-            max_messages_per_batch=1000,
-            max_run_seconds=1800,
-        )
+        result = consumer.consume_available()
         logger.info("Kafka ingestion completed: %s", result)
         return result
     except Exception as exc:
@@ -79,10 +88,10 @@ with DAG(
     'fraud_detection_training',
     default_args=default_args,
     description='A DAG for training the fraud detection model',
-    schedule="0 4 * * *",  # Every day at 04:00 AM
+    schedule=DAG_CONFIG["schedule"],
     catchup=False,
     tags=['fraud', 'ML'],
-    max_active_runs=1,
+    max_active_runs=int(DAG_CONFIG["max_active_runs"]),
 ) as dag:
 
     validate_environment = BashOperator(

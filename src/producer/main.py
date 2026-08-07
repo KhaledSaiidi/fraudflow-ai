@@ -1,10 +1,7 @@
-from importlib.metadata import metadata
 import json
-import os
 import signal
 from typing import Any, Dict, Optional
 from confluent_kafka import Producer
-from dotenv import load_dotenv
 import logging
 import random
 from faker import Faker
@@ -16,14 +13,14 @@ from confluent_kafka.admin import AdminClient
 from confluent_kafka.cimpl import NewTopic
 from confluent_kafka.cimpl import NewPartitions
 
+from settings import load_config, require_credential
+
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
     level=logging.INFO
 )
 
 logger = logging.getLogger(__name__)
-
-load_dotenv(dotenv_path="/app/.env")
 
 fake = Faker()
 
@@ -43,29 +40,36 @@ TRANSACTION_SCHEMA = {
 }
 
 class TransactionProducer():
-    def __init__(self):
-        self.bootstrap_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
-        self.kafka_username = os.getenv('KAFKA_USERNAME')
-        self.kafka_password = os.getenv('KAFKA_PASSWORD')
-        self.kafka_security_protocol = os.getenv('KAFKA_SECURITY_PROTOCOL', 'SASL_PLAINTEXT')
-        self.topic = os.getenv('KAFKA_TOPIC', 'transactions')
-        self.topic_partitions = int(os.getenv('KAFKA_TOPIC_PARTITIONS', 6))
-        self.topic_replication_factor = int(os.getenv('KAFKA_TOPIC_REPLICATION_FACTOR', 3))
+    def __init__(self, config_path: str = "/app/config.yaml"):
+        self.config = load_config(config_path)
+        kafka_config = self.config["kafka"]
+        producer_config = kafka_config["producer"]
+
+        self.bootstrap_servers = kafka_config["bootstrap_servers"]
+        self.kafka_username = require_credential("KAFKA_USERNAME")
+        self.kafka_password = require_credential("KAFKA_PASSWORD")
+        self.kafka_security_protocol = kafka_config["security_protocol"]
+        self.kafka_sasl_mechanism = kafka_config["sasl_mechanism"]
+        self.topic = kafka_config["topic"]
+        self.topic_partitions = int(kafka_config["topic_partitions"])
+        self.topic_replication_factor = int(
+            kafka_config["topic_replication_factor"]
+        )
         self.running = False
 
         # confluent kafka producer configuration
         self.producer_config = {
             'bootstrap.servers': self.bootstrap_servers,
-            'client.id': 'transaction-producer',
-            'compression.type': 'gzip',
-            'linger.ms': '5',
-            'batch.size': 16384,
+            'client.id': producer_config["client_id"],
+            'compression.type': producer_config["compression_type"],
+            'linger.ms': int(producer_config["linger_ms"]),
+            'batch.size': int(producer_config["batch_size"]),
         }
 
         if self.kafka_username and self.kafka_password:
             self.producer_config.update({
                 'security.protocol': self.kafka_security_protocol,
-                'sasl.mechanism': 'PLAIN',
+                'sasl.mechanism': self.kafka_sasl_mechanism,
                 'sasl.username': self.kafka_username,
                 'sasl.password': self.kafka_password,
             })

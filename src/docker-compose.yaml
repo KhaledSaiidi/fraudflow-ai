@@ -6,21 +6,21 @@ x-airflow-common:
   image: airflow-training:latest
   build: ./airflow
   env_file:
-    - ${ENV_FILE_PATH:-.env}
+    - .env
   environment:
     &airflow-common-env
-    AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+    AIRFLOW_UID: 50000
     AIRFLOW__CORE__EXECUTOR: CeleryExecutor
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
-    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_POSTGRES_USER:?AIRFLOW_POSTGRES_USER is required}:${AIRFLOW_POSTGRES_PASSWORD:?AIRFLOW_POSTGRES_PASSWORD is required}@postgres/airflow
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql+psycopg2://${AIRFLOW_POSTGRES_USER:?AIRFLOW_POSTGRES_USER is required}:${AIRFLOW_POSTGRES_PASSWORD:?AIRFLOW_POSTGRES_PASSWORD is required}@postgres/airflow
     AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
-    AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY:-gAAAAABnG8rH3kK5vL2mN7pQ0rS9tU4vW5xY8zZ1aB2cD3eF4gH5iJ6kL7mN8oP9q0rS1tU2vW3xY4zZ5aB6cD7e}
+    AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY:?FERNET_KEY is required}
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
-    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-airflow_jwt_secret}
-    AIRFLOW__API_AUTH__JWT_ISSUER: ${AIRFLOW__API_AUTH__JWT_ISSUER:-airflow}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:?AIRFLOW__API_AUTH__JWT_SECRET is required}
+    AIRFLOW__API_AUTH__JWT_ISSUER: airflow
     # yamllint disable rule:line-length
     # Use simple http server on scheduler for health checks
     # See https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html#scheduler-health-check-server
@@ -28,21 +28,19 @@ x-airflow-common:
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
     # WARNING: Use _PIP_ADDITIONAL_REQUIREMENTS option ONLY for a quick checks
     # for other purpose (development, test and especially production usage) build/extend Airflow image.
-    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
+    _PIP_ADDITIONAL_REQUIREMENTS: ''
     # The following line can be used to set a custom config file, stored in the local config folder
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
-    MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow-server:5500}
-    MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL:-http://minio:9000}
   volumes:
     # DAG source belongs to the host developer; containers only need to read it.
-    - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags:ro
-    - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
-    - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
-    - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    - ./dags:/opt/airflow/dags:ro
+    - ./logs:/opt/airflow/logs
+    - ./config:/opt/airflow/config
+    - ./plugins:/opt/airflow/plugins
     - ./models:/app/models
     - ./config.yaml:/app/config.yaml
     - ./.env:/app/.env
-  user: "${AIRFLOW_UID:-50000}:0"
+  user: "50000:0"
   depends_on:
     &airflow-common-depends-on
     redis:
@@ -54,17 +52,17 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: ${AIRFLOW_POSTGRES_USER:-airflow}
-      POSTGRES_PASSWORD: ${AIRFLOW_POSTGRES_PASSWORD:-airflow}
-      POSTGRES_DB: ${AIRFLOW_POSTGRES_DB:-airflow}
-      MLFLOW_DB_NAME: ${MLFLOW_DB_NAME:-mlflow}
-      MLFLOW_DB_USER: ${MLFLOW_DB_USER:-mlflow}
-      MLFLOW_DB_PASSWORD: ${MLFLOW_DB_PASSWORD:-mlflow123}
+      POSTGRES_USER: ${AIRFLOW_POSTGRES_USER:?AIRFLOW_POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${AIRFLOW_POSTGRES_PASSWORD:?AIRFLOW_POSTGRES_PASSWORD is required}
+      POSTGRES_DB: airflow
+      MLFLOW_DB_NAME: mlflow
+      MLFLOW_DB_USER: ${MLFLOW_DB_USER:?MLFLOW_DB_USER is required}
+      MLFLOW_DB_PASSWORD: ${MLFLOW_DB_PASSWORD:?MLFLOW_DB_PASSWORD is required}
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
       - ./scripts/init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh:ro
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "airflow"]
+      test: ["CMD-SHELL", 'pg_isready -U "$${POSTGRES_USER}"']
       interval: 10s
       retries: 5
       start_period: 5s
@@ -165,7 +163,7 @@ services:
         condition: service_completed_successfully
     deploy:
       mode: replicated
-      replicas: ${AIRFLOW_WORKER_REPLICAS:-3}
+      replicas: 3
     networks:
       - fraud-detection
 
@@ -256,9 +254,9 @@ services:
         echo
         ls -la /opt/airflow/{logs,dags,plugins,config}
         echo
-        echo "Change ownership of writable shared volumes to ${AIRFLOW_UID:-50000}:0"
+        echo "Change ownership of writable shared volumes to 50000:0"
         echo
-        chown -v -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/{logs,plugins,config}
+        chown -v -R "50000:0" /opt/airflow/{logs,plugins,config}
         echo
         echo "Files in shared volumes:"
         echo
@@ -269,8 +267,8 @@ services:
       <<: *airflow-common-env
       _AIRFLOW_DB_MIGRATE: 'true'
       _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
-      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USERNAME:?AIRFLOW_ADMIN_USERNAME is required}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD is required}
       _PIP_ADDITIONAL_REQUIREMENTS: ''
     user: "0:0"
     networks:
@@ -329,15 +327,15 @@ services:
       - "5500:5500"
     environment:
       - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - MLFLOW_SERVER_ALLOWED_HOSTS=${MLFLOW_SERVER_ALLOWED_HOSTS:-mlflow-server:5500,localhost:*,127.0.0.1:*}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required}
+      - MLFLOW_SERVER_ALLOWED_HOSTS=mlflow-server:5500,localhost:*,127.0.0.1:*
     command:
       - server
       - --host=0.0.0.0
       - --port=5500
       - --backend-store-uri
-      - postgresql+psycopg2://${MLFLOW_DB_USER:-mlflow}:${MLFLOW_DB_PASSWORD:-mlflow123}@postgres/${MLFLOW_DB_NAME:-mlflow}
+      - postgresql+psycopg2://${MLFLOW_DB_USER:?MLFLOW_DB_USER is required}:${MLFLOW_DB_PASSWORD:?MLFLOW_DB_PASSWORD is required}@postgres/mlflow
       - --default-artifact-root
       - s3://mlflow
     networks:
@@ -351,7 +349,7 @@ services:
       - minio
     container_name: mc
     env_file:
-      - ${ENV_FILE_PATH:-.env}
+      - .env
     entrypoint:
         - /bin/sh
         - -c
@@ -375,8 +373,8 @@ services:
       - "9001:9001"
     command: server /data --console-address ":9001" --address ":9000"
     environment:
-      - MINIO_ROOT_USER=${MINIO_USERNAME}
-      - MINIO_ROOT_PASSWORD=${MINIO_PASSWORD}
+      - MINIO_ROOT_USER=${MINIO_USERNAME:?MINIO_USERNAME is required}
+      - MINIO_ROOT_PASSWORD=${MINIO_PASSWORD:?MINIO_PASSWORD is required}
     volumes:
       - minio-data:/data
     networks:
@@ -611,8 +609,12 @@ services:
       - fraud-detection
 
   producer:
-    build: ./producer
+    build:
+      context: .
+      dockerfile: producer/Dockerfile
     env_file: .env
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
     restart: always
     depends_on:
       producer-init:

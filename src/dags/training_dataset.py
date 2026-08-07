@@ -1,14 +1,13 @@
 import logging
-import os
 from datetime import datetime, timedelta
 from io import BytesIO
 
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-import yaml
-from dotenv import load_dotenv
 from minio import Minio
+
+from settings import load_config, require_credential
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
@@ -16,7 +15,6 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
-load_dotenv(dotenv_path="/app/.env")
 
 
 REQUIRED_TRANSACTION_FIELDS = {
@@ -42,30 +40,26 @@ DEDUPLICATION_FIELDS = {
 
 class TrainingDataset:
     def __init__(self, config_path='/app/config.yaml'):
-        self.minio_endpoint = os.getenv('MINIO_ENDPOINT', 'minio:9000')
-        self.minio_access_key = os.getenv('AWS_ACCESS_KEY_ID')
-        self.minio_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
-        self.dedup_shard_count = int(os.getenv("DEDUP_SHARD_COUNT", "3"))
-        if self.dedup_shard_count < 1:
-            raise ValueError("DEDUP_SHARD_COUNT must be at least 1")
-        self.config = self._load_config(config_path)
+        self.config = load_config(config_path)
+        minio_config = self.config["minio"]
 
-        self.source_bucket = self.config["training_data"]["source_bucket"]
-        self.destination_bucket = self.config["training_data"]["destination_bucket"]
+        self.minio_endpoint = minio_config["endpoint"]
+        self.minio_secure = bool(minio_config["secure"])
+        self.minio_access_key = require_credential("AWS_ACCESS_KEY_ID")
+        self.minio_secret_key = require_credential("AWS_SECRET_ACCESS_KEY")
+        self.dedup_shard_count = int(
+            self.config["ingestion"]["dedup_shard_count"]
+        )
+        if self.dedup_shard_count < 1:
+            raise ValueError("ingestion.dedup_shard_count must be at least 1")
+
+        buckets = minio_config["buckets"]
+        self.source_bucket = buckets["transactions"]
+        self.destination_bucket = buckets["fraud_features"]
         self.lookback_days = self.config["training_data"]["lookback_days"]
         self.minimum_rows = self.config["training_data"]["minimum_rows"]
         self.label_column = self.config["training_data"]["label_column"]
         self.dataset_version = self.config["training_data"]["dataset_version"]
-
-    def _load_config(self, config_path: str) -> dict:
-        try:
-            with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
-            logger.info('Configuration loaded successfully...')
-            return config
-        except Exception as e:
-            logger.error('Failed to load Config: %s...', str(e))
-            raise
 
     def connect_to_minio(self) -> Minio:
         """Connect to Minio storage and return the client."""
@@ -74,7 +68,7 @@ class TrainingDataset:
                 self.minio_endpoint,
                 access_key=self.minio_access_key,
                 secret_key=self.minio_secret_key,
-                secure=False
+                secure=self.minio_secure,
             )
             logger.info("Connected to Minio at %s", self.minio_endpoint)
             return minio_client

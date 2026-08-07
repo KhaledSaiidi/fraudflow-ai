@@ -1,6 +1,5 @@
 mlflow
 confluent-kafka
-python-dotenv
 pyyaml
 catboost
 pyspark

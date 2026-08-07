@@ -6,15 +6,15 @@ from io import BytesIO
 import json
 import logging
 import math
-import os
 import time
 from typing import Any
 
 from confluent_kafka import Consumer, OFFSET_STORED, TopicPartition
-from dotenv import load_dotenv
 from minio import Minio
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+from settings import load_config, require_credential
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
@@ -22,7 +22,6 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
-load_dotenv(dotenv_path="/app/.env")
 
 
 REQUIRED_TRANSACTION_FIELDS = {
@@ -45,27 +44,41 @@ class ConsumedBatch:
 class TransactionConsumer:
     def __init__(
         self,
-        client_id: str = "transaction-consumer",
+        client_id: str | None = None,
         worker_index: int = 0,
         worker_count: int = 1,
+        config_path: str = "/app/config.yaml",
     ):
         if worker_count < 1:
             raise ValueError("worker_count must be at least 1")
         if not 0 <= worker_index < worker_count:
             raise ValueError("worker_index must be between 0 and worker_count - 1")
 
-        self.bootstrap_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
-        self.kafka_username = os.getenv('KAFKA_USERNAME')
-        self.kafka_password = os.getenv('KAFKA_PASSWORD')
-        self.kafka_security_protocol = os.getenv('KAFKA_SECURITY_PROTOCOL', 'SASL_PLAINTEXT')
-        self.topic = os.getenv('KAFKA_TOPIC', 'transactions')
-        self.topic_partitions = int(os.getenv('KAFKA_TOPIC_PARTITIONS', 6))
-        self.minio_endpoint = os.getenv('MINIO_ENDPOINT', 'minio:9000')
-        self.minio_access_key = os.getenv('AWS_ACCESS_KEY_ID')
-        self.minio_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
-        self.dedup_shard_count = int(os.getenv("DEDUP_SHARD_COUNT", "3"))
+        self.config = load_config(config_path)
+        kafka_config = self.config["kafka"]
+        minio_config = self.config["minio"]
+        ingestion_config = self.config["ingestion"]
+
+        self.bootstrap_servers = kafka_config["bootstrap_servers"]
+        self.kafka_username = require_credential("KAFKA_USERNAME")
+        self.kafka_password = require_credential("KAFKA_PASSWORD")
+        self.kafka_security_protocol = kafka_config["security_protocol"]
+        self.kafka_sasl_mechanism = kafka_config["sasl_mechanism"]
+        self.topic = kafka_config["topic"]
+        self.topic_partitions = int(kafka_config["topic_partitions"])
+        self.minio_endpoint = minio_config["endpoint"]
+        self.minio_secure = bool(minio_config["secure"])
+        self.minio_access_key = require_credential("AWS_ACCESS_KEY_ID")
+        self.minio_secret_key = require_credential("AWS_SECRET_ACCESS_KEY")
+        self.transactions_bucket = minio_config["buckets"]["transactions"]
+        self.max_messages_per_batch = int(
+            ingestion_config["max_messages_per_batch"]
+        )
+        self.max_run_seconds = int(ingestion_config["max_run_seconds"])
+        self.max_wait_seconds = int(ingestion_config["max_wait_seconds"])
+        self.dedup_shard_count = int(ingestion_config["dedup_shard_count"])
         if self.dedup_shard_count < 1:
-            raise ValueError("DEDUP_SHARD_COUNT must be at least 1")
+            raise ValueError("ingestion.dedup_shard_count must be at least 1")
         self.worker_index = worker_index
         self.worker_count = worker_count
         self.partition_ids = list(
@@ -80,9 +93,9 @@ class TransactionConsumer:
         # Confluent Kafka consumer configuration
         self.consumer_config = {
             'bootstrap.servers': self.bootstrap_servers,
-            'group.id': 'transaction-consumer',
-            "client.id": client_id,
-            'auto.offset.reset': 'earliest',
+            'group.id': kafka_config["consumer"]["group_id"],
+            "client.id": client_id or kafka_config["consumer"]["client_id"],
+            'auto.offset.reset': kafka_config["consumer"]["auto_offset_reset"],
             'enable.auto.commit': False,
             'enable.auto.offset.store': False,
         }
@@ -90,7 +103,7 @@ class TransactionConsumer:
         if self.kafka_username and self.kafka_password:
             self.consumer_config.update({
                 'security.protocol': self.kafka_security_protocol,
-                'sasl.mechanism': 'PLAIN',
+                'sasl.mechanism': self.kafka_sasl_mechanism,
                 'sasl.username': self.kafka_username,
                 'sasl.password': self.kafka_password,
             })
@@ -141,7 +154,7 @@ class TransactionConsumer:
                 self.minio_endpoint,
                 access_key=self.minio_access_key,
                 secret_key=self.minio_secret_key,
-                secure=False
+                secure=self.minio_secure,
             )
             logger.info("Connected to Minio at %s", self.minio_endpoint)
             return minio_client
@@ -151,9 +164,14 @@ class TransactionConsumer:
 
     def consume_available(
         self,
-        max_messages_per_batch: int = 1000,
-        max_run_seconds: int = 1800,
+        max_messages_per_batch: int | None = None,
+        max_run_seconds: int | None = None,
     ) -> dict[str, int]:
+        if max_messages_per_batch is None:
+            max_messages_per_batch = self.max_messages_per_batch
+        if max_run_seconds is None:
+            max_run_seconds = self.max_run_seconds
+
         deadline = time.monotonic() + max_run_seconds
         consumed_message_count = 0
         transaction_count = 0
@@ -162,7 +180,7 @@ class TransactionConsumer:
         while time.monotonic() < deadline:
             batch = self._consume_transactions(
                 max_messages=max_messages_per_batch,
-                max_wait_seconds=5,
+                max_wait_seconds=self.max_wait_seconds,
             )
 
             # Kafka has been quiet for five seconds: backlog is drained.
@@ -417,7 +435,7 @@ class TransactionConsumer:
             return []
 
         minio_client = self.connect_to_minio()
-        bucket_name = os.getenv('MINIO_BUCKET', 'transactions')
+        bucket_name = self.transactions_bucket
         transactions_by_partition: dict[
             tuple[str, int],
             list[dict[str, Any]],

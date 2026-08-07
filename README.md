@@ -46,6 +46,17 @@ Spark Structured Streaming
 * **Machine Learning** — transaction risk classification
 * **Docker** — reproducible local infrastructure
 
+## Configuration
+
+Non-secret application settings are centralized in `src/config.yaml`. This
+includes Kafka endpoints and topic settings, MinIO endpoints and bucket names,
+ingestion behavior, training dataset settings, MLflow settings, and DAG
+scheduling.
+
+`src/.env` is reserved for credentials and cryptographic secrets. Use
+`src/.env.example` as the required-key template. Application code must not read
+non-secret behavior from environment variables.
+
 ## Project Goals
 
 This project is designed to explore:
