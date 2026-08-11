@@ -48,13 +48,13 @@ Spark Structured Streaming
 
 ## Configuration
 
-Non-secret application settings are centralized in `src/config.yaml`. This
+Non-secret application settings are centralized in `config.yaml`. This
 includes Kafka endpoints and topic settings, MinIO endpoints and bucket names,
 ingestion behavior, training dataset settings, MLflow settings, and DAG
 scheduling.
 
-`src/.env` is reserved for credentials and cryptographic secrets. Use
-`src/.env.example` as the required-key template. Application code must not read
+`.env` is reserved for credentials and cryptographic secrets. Use
+`.env.example` as the required-key template. Application code must not read
 non-secret behavior from environment variables.
 
 ## Project Goals
