@@ -1,92 +1,216 @@
 # FraudFlow AI
 
-A scalable, real-time fraud detection platform that combines event streaming, distributed data processing, and machine learning to identify suspicious financial transactions as they happen.
+FraudFlow AI is a containerized fraud-detection platform that simulates end-to-end transaction ingestion, feature generation, and model-training orchestration.
 
-## Overview
+It is built to demonstrate production-oriented data and ML engineering patterns with Kafka, Airflow, MinIO, PostgreSQL, Redis, and MLflow.
 
-FraudFlow AI simulates a production-oriented transaction-processing system where financial events are continuously published, processed, enriched, and evaluated by a machine-learning model.
+## Current Status
 
-The project explores how modern data and ML systems work together to deliver low-latency predictions over high-volume event streams.
+Implemented now:
+
+- Kafka producer that generates synthetic transactions with fraud patterns
+- Kafka ingestion pipeline with validation, partition-aware consumption, deduplication, and Parquet output
+- Airflow DAG that orchestrates ingestion, dataset building, and training task execution
+- Training dataset builder with feature engineering and MinIO persistence
+- Full local infrastructure in Docker Compose (Airflow + Kafka + MinIO + MLflow)
+
+Not implemented yet:
+
+- Real model training logic in `dags/fraud_detection_training.py` (`train_model` is still a stub)
+- Real-time inference consumer for `fraud_predictions`
+- Monitoring dashboards and drift detection
+
+## Repository Layout
+
+```text
+.
+├── airflow/
+├── config/
+├── config.yaml
+├── dags/
+├── docker-compose.yaml
+├── logs/
+├── mlflow/
+├── models/
+├── plugins/
+├── producer/
+├── scripts/
+├── .env
+├── .env.example
+└── README.md
+```
 
 ## Architecture
 
 ```text
-Transaction Generator
-        │
-        ▼
-   Apache Kafka
-        │
-        ▼
-Spark Structured Streaming
-        │
-        ├── Data validation
-        ├── Feature engineering
-        └── ML inference
-        │
-        ▼
- Fraud Predictions
+Transaction Producer (2 replicas)
+        |
+        v
+Kafka Cluster (3 brokers, KRaft, 6 partitions, SASL_PLAINTEXT)
+        |
+        v
+Airflow DAG: fraud_detection_training (daily)
+  1) validate_environment
+  2) ingest_transactions_0..2 (parallel)
+  3) build_training_dataset
+  4) execute_training (currently stubbed)
+  5) cleanup
+        |
+        v
+MinIO buckets
+  - transactions     (raw deduplicated parquet batches)
+  - fraud-features   (training dataset parquet)
+  - mlflow           (MLflow artifacts)
+        |
+        v
+MLflow Tracking Server
 ```
 
-## Core Capabilities
+## Data Flow Details
 
-* Stream financial transactions through Apache Kafka
-* Process events using Spark Structured Streaming
-* Build and train a fraud-detection model
-* Apply ML predictions to live transaction streams
-* Detect and handle duplicate events
-* Support scalable processing through Kafka partitions and Spark parallelism
-* Track model training, evaluation, and future retraining workflows
-* Run the local platform using containerized services
+### 1) Producer
 
-## Technology Stack
+`producer/main.py` continuously emits synthetic transactions and applies fraud simulation rules.
 
-* **Python** — application logic and machine learning
-* **Apache Kafka** — event ingestion and durable streaming
-* **Apache Spark** — distributed stream processing
-* **Machine Learning** — transaction risk classification
-* **Docker** — reproducible local infrastructure
+Fraud simulation patterns include:
+
+- Account takeover behavior
+- Card testing behavior
+- Merchant collusion behavior
+- Geographic anomaly behavior
+
+Producer behavior also includes JSON schema validation and Kafka topic bootstrap/partition management.
+
+### 2) Ingestion
+
+`dags/ingestor.py` consumes from Kafka with worker-aware partition assignment.
+
+Key ingestion settings from `config.yaml`:
+
+- `worker_count: 3`
+- `max_messages_per_batch: 1000`
+- `max_wait_seconds: 5`
+- `max_run_seconds: 1800`
+- `dedup_shard_count: 3`
+
+Data is validated, deduplicated, and written as Snappy-compressed Parquet under:
+
+`transactions/event_date=YYYY-MM-DD/dedup_shard=N/...parquet`
+
+### 3) Training Dataset Build
+
+`dags/training_dataset.py` loads shard data for a configurable lookback window (`training_data.lookback_days`, default 30), deduplicates, creates features, and writes:
+
+`fraud-features/v1/features-YYYY-MM-DD.parquet`
+
+Implemented engineered features include:
+
+- `hour_of_day`
+- `day_of_week`
+- `is_weekend`
+- `log_amount`
+- `is_card_testing`
+- `is_large_amount`
+- `is_very_large_amount`
+- `is_high_risk_merchant`
+- `is_suspicious_location`
+
+The target label is `is_fraud`.
+
+### 4) Model Training
+
+`dags/fraud_detection_training.py` has infrastructure scaffolding (MinIO checks, MLflow setup) but `train_model` currently returns hardcoded values.
+
+## Airflow DAG
+
+`dags/fraud_detection_training_dag.py` defines a daily DAG (`0 4 * * *`) with:
+
+- environment validation task
+- three parallel ingestion tasks
+- one dataset build task
+- one training task
+- cleanup task (`trigger_rule='all_done'`)
 
 ## Configuration
 
-Non-secret application settings are centralized in `config.yaml`. This
-includes Kafka endpoints and topic settings, MinIO endpoints and bucket names,
-ingestion behavior, training dataset settings, MLflow settings, and DAG
-scheduling.
+Non-secret settings live in `config.yaml`:
 
-`.env` is reserved for credentials and cryptographic secrets. Use
-`.env.example` as the required-key template. Application code must not read
-non-secret behavior from environment variables.
+- Kafka connectivity and topic parameters
+- MinIO endpoint and bucket names
+- Ingestion worker/batch behavior
+- Training dataset lookback/minimum rows
+- Airflow DAG scheduling and retry policy
+- MLflow tracking and registry names
 
-## Project Goals
+Secrets and credentials live in `.env` (template: `.env.example`).
 
-This project is designed to explore:
+Required credential groups:
 
-* event-driven architecture
-* real-time data processing
-* Kafka producers, consumers, topics, and partitions
-* distributed processing and parallelism
-* streaming feature engineering
-* model training and inference
-* idempotency and duplicate-event handling
-* throughput and latency trade-offs
-* production-oriented ML system design
+- MinIO/S3 credentials
+- Airflow DB/admin/JWT/Fernet credentials
+- MLflow DB credentials
+- Kafka SASL credentials
 
-## Project Status
+## Quick Start
 
-> 🚧 Work in progress
+### 1) Prepare environment
 
-The initial implementation focuses on building the transaction ingestion pipeline, Kafka infrastructure, streaming processor, and machine-learning workflow.
+```bash
+cp .env.example .env
+# Edit .env and set all required values
+```
 
-Future improvements may include:
+### 2) Start the full stack
 
-* Redis-backed online features and caching
-* model and experiment tracking
-* real-time monitoring dashboards
-* data and model drift detection
-* automated model retraining
-* Kubernetes deployment
-* observability with metrics, logs, and tracing
+```bash
+docker-compose up -d
+docker-compose ps
+```
+
+### 3) Open service UIs
+
+- Airflow: `http://localhost:8080`
+- MLflow: `http://localhost:5500`
+- MinIO Console: `http://localhost:9001`
+- Kafka UI: `http://localhost:8085`
+- Flower (optional profile): `http://localhost:5555`
+
+### 4) Trigger and monitor DAG
+
+Use Airflow UI, or:
+
+```bash
+curl -X POST http://localhost:8080/api/v2/dags/fraud_detection_training/dagRuns \
+  -u "$AIRFLOW_ADMIN_USERNAME:$AIRFLOW_ADMIN_PASSWORD" \
+  -H "Content-Type: application/json" \
+  -d '{"note":"manual run"}'
+```
+
+Check logs:
+
+```bash
+docker logs -f airflow-scheduler
+docker logs -f airflow-worker
+```
+
+## Technology Stack
+
+- Python (runtime for producer, DAG tasks, and training components)
+- Apache Kafka 4.x in KRaft mode
+- Apache Airflow 3.3 with CeleryExecutor
+- Redis + PostgreSQL for Airflow backend and broker/results
+- MinIO for object storage
+- MLflow for experiment tracking/artifacts
+- PyArrow/Pandas for dataset processing
+- Docker Compose for local orchestration
+
+## Roadmap
+
+- Implement `train_model` end-to-end (load dataset, train, evaluate, log to MLflow, register model)
+- Add inference service consuming `fraud_predictions`
+- Add metrics/observability and drift detection
+- Add automated retraining strategy
 
 ## Disclaimer
 
-This project uses generated or public sample data and is intended for learning and experimentation. It is not designed for use in real financial decision-making.
+This project uses synthetic/sample-like data and is intended for learning and experimentation only. It is not suitable for real financial decision-making without substantial additional controls.
