@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 from airflow.sdk import DAG
@@ -86,21 +86,20 @@ def _ingest_transactions(
 
 def build_training_dataset(**context):
     """
-    Function to build the training dataset.
-    This function should contain the logic to load raw transaction data,
-    preprocess it, and save the resulting training dataset.
+    Function to build the training dataset for fraud detection.
+    This function should contain the logic to process ingested transactions and create
+    a dataset suitable for model training, including feature engineering and data cleaning.
     """
+    
     from training_dataset import TrainingDataset
     try:
         logger.info("Build the training dataset...")
         builder = TrainingDataset()
-        object_name = builder.build_training_dataset(cutoff=datetime.now())
-
-        return {'status': 'success', 'object name': object_name}
-
+        object_name = builder.build_training_dataset(cutoff=datetime.now(timezone.utc))
+        return {'status': 'success', 'object_name': object_name}
     except Exception as e:
-        logger.error("Model training failed: %s", str(e), exc_info=True)
-        raise AirflowException(f'Model Training failed: {str(e)}') from e
+        logger.error("Dataset build failed: %s", str(e), exc_info=True)
+        raise AirflowException(f'Dataset build failed: {str(e)}') from e
     
 with DAG(
     'fraud_detection_training',
@@ -138,17 +137,10 @@ with DAG(
         for index in range(INGESTION_WORKER_COUNT)
     ]
 
-    build_training_dataset_tasks = [
-        PythonOperator(
-            task_id=f"build_training_dataset_{index}",
-            python_callable=build_training_dataset,
-            op_kwargs={
-                "shard_index": index,
-                "shard_count": INGESTION_WORKER_COUNT,
-                },
-        )
-        for index in range(INGESTION_WORKER_COUNT)
-    ]
+    build_training_dataset_task = PythonOperator(
+        task_id="build_training_dataset",
+        python_callable=build_training_dataset,
+    )
 
     training_task = PythonOperator(
         task_id='execute_training',
@@ -161,7 +153,7 @@ with DAG(
         trigger_rule='all_done'  # Ensure cleanup runs regardless of previous task outcomes
     )
 
-    validate_environment >> ingestion_tasks >> build_training_dataset_tasks >>training_task >> cleanup_task
+    validate_environment >> ingestion_tasks >> build_training_dataset_task >> training_task >> cleanup_task
 
     # Documentation 
     dag.doc_md = """
