@@ -64,20 +64,18 @@ class TrainingDataset:
     def build_training_dataset(self, cutoff: datetime) -> str:
         """Build the training dataset for fraud detection."""
         all_tables: list[pa.Table] = []
-        all_object_names: list[str] = []
         for shard_index in range(self.dedup_shard_count):
             logger.info(
                 "Loading data for deduplication shard %d/%d",
                 shard_index + 1,
                 self.dedup_shard_count,
             )
-            table, object_names = self._get_data(
+            table, _ = self._get_data(
                 cutoff=cutoff,
                 lookback_days=self.lookback_days,
                 shard_index=shard_index,
             )
             all_tables.append(table)
-            all_object_names.extend(object_names)
 
         combined_table = pa.concat_tables(all_tables, promote_options="default")
         feature_table = self._create_features(combined_table)
@@ -231,17 +229,16 @@ class TrainingDataset:
         )
         frame = combined.to_pandas()
         frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True)
+        frame = frame[
+            (frame["timestamp"] >= start)
+            & (frame["timestamp"] < cutoff)
+        ]
 
         if len(frame) == 0:
             raise ValueError(
                 f"No transactions remain for shard {shard_index} "
                 f"after filtering to [{start}, {cutoff})"
             )
-
-        frame = frame[
-            (frame["timestamp"] >= start)
-            & (frame["timestamp"] < cutoff)
-        ]
         combined = pa.Table.from_pandas(frame, preserve_index=False)
         combined, deduped_count = self._deduplicate_data(combined)
         if deduped_count > 0:
