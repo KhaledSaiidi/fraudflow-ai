@@ -61,6 +61,42 @@ class TrainingDataset:
         self.label_column = self.config["training_data"]["label_column"]
         self.dataset_version = self.config["training_data"]["dataset_version"]
 
+    def build_training_dataset(self, cutoff: datetime) -> str:
+        """Build the training dataset for fraud detection."""
+        all_tables: list[pa.Table] = []
+        for shard_index in range(self.dedup_shard_count):
+            logger.info(
+                "Loading data for deduplication shard %d/%d",
+                shard_index + 1,
+                self.dedup_shard_count,
+            )
+            table, _ = self._get_data(
+                cutoff=cutoff,
+                lookback_days=self.lookback_days,
+                shard_index=shard_index,
+            )
+            all_tables.append(table)
+
+        combined_table = pa.concat_tables(all_tables, promote_options="default")
+        feature_table = self._create_features(combined_table)
+
+        if feature_table.num_rows < self.minimum_rows:
+            raise ValueError(
+                f"Training dataset has only {feature_table.num_rows} rows, "
+                f"which is less than the minimum required {self.minimum_rows}"
+            )
+
+        object_name = self._write_dataset(feature_table, cutoff)
+        logger.info(
+            "Training dataset built successfully with %d rows and %d columns. "
+            "Stored at %s/%s",
+            feature_table.num_rows,
+            feature_table.num_columns,
+            self.destination_bucket,
+            object_name,
+        )
+        return object_name
+    
     def connect_to_minio(self) -> Minio:
         """Connect to Minio storage and return the client."""
         try:
@@ -193,11 +229,16 @@ class TrainingDataset:
         )
         frame = combined.to_pandas()
         frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True)
-
         frame = frame[
             (frame["timestamp"] >= start)
             & (frame["timestamp"] < cutoff)
         ]
+
+        if len(frame) == 0:
+            raise ValueError(
+                f"No transactions remain for shard {shard_index} "
+                f"after filtering to [{start}, {cutoff})"
+            )
         combined = pa.Table.from_pandas(frame, preserve_index=False)
         combined, deduped_count = self._deduplicate_data(combined)
         if deduped_count > 0:
@@ -209,8 +250,61 @@ class TrainingDataset:
 
         return combined, loaded_object_names
 
-    def _write_dataset(self):
-        pass
+    def _write_dataset(self, feature_table: pa.Table, cutoff: datetime) -> str:
+        buffer = BytesIO()
+        pq.write_table(feature_table, buffer)
+        data_len = buffer.tell()
+        buffer.seek(0)
+        object_name = (
+            f"{self.dataset_version}/"
+            f"features-{cutoff.date().isoformat()}.parquet"
+        )
+        minio_client = self.connect_to_minio()
+        try:
+            minio_client.put_object(
+                self.destination_bucket,
+                object_name,
+                buffer,
+                length=data_len,
+                content_type="application/octet-stream",
+            )
+            logger.info("Wrote dataset to %s/%s", self.destination_bucket, object_name)
+            return object_name
+        except Exception as e:
+            logger.error("Failed to write dataset to %s/%s: %s", self.destination_bucket, object_name, e)
+            raise
 
-    def _create_features(self):
-        pass
+    _HIGH_RISK_MERCHANTS = {"QuickCash", "GlobalDigital", "FastMoneyX"}
+    _SUSPICIOUS_LOCATIONS = {"CN", "RU", "GB"}
+
+    @staticmethod
+    def _create_features(table: pa.Table) -> pa.Table:
+        """Create features for fraud detection."""
+        import math
+        try:
+            frame = table.to_pandas()
+
+            frame["hour_of_day"] = frame["timestamp"].dt.hour
+            frame["day_of_week"] = frame["timestamp"].dt.dayofweek
+            frame["is_weekend"] = frame["day_of_week"].isin([5, 6]).astype(int)
+            frame["log_amount"] = frame["amount"].clip(lower=0.01).apply(math.log)
+            frame["is_card_testing"] = (frame["amount"] < 2.0).astype(int)
+            frame["is_large_amount"] = (frame["amount"] > 500).astype(int)
+            frame["is_very_large_amount"] = (frame["amount"] > 3000).astype(int)
+            frame["is_high_risk_merchant"] = frame["merchant"].isin(
+                TrainingDataset._HIGH_RISK_MERCHANTS
+            ).astype(int)
+            frame["is_suspicious_location"] = frame["location"].isin(
+                TrainingDataset._SUSPICIOUS_LOCATIONS
+            ).astype(int)
+            frame["is_fraud"] = frame["is_fraud"].astype(int)
+
+            # drop Kafka metadata — not predictive signals
+            frame = frame.drop(
+                columns=["transaction_id", "ingested_at", "kafka_partition", "kafka_offset", "dedup_shard"],
+                errors="ignore",
+            )
+            return pa.Table.from_pandas(frame, preserve_index=False)
+        except Exception as e:
+            logger.error("Error creating features: %s", str(e))
+            raise

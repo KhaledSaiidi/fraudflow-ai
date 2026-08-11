@@ -70,3 +70,11 @@ class FraudDetectionTraining:
         except Exception as e:
             logger.error("Model training failed: %s", str(e), exc_info=True)
             raise
+
+# What train_model needs to do:
+# Load the feature parquet from MinIO (fraud-features bucket, {version}/features-{date}.parquet) — the object name comes from build_training_dataset's return value, which the DAG currently discards (XCom could pass it)
+# Split into X (features) / y (is_fraud) and train/test split
+# Train a LightGBM or CatBoost classifier
+# Log metrics (precision, recall, roc_auc) + the model to MLflow
+# Register the model in MLflow model registry
+# Should

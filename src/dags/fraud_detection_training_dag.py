@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 from airflow.sdk import DAG
@@ -84,6 +84,23 @@ def _ingest_transactions(
     finally:
         consumer.close()
 
+def build_training_dataset(**context):
+    """
+    Function to build the training dataset for fraud detection.
+    This function should contain the logic to process ingested transactions and create
+    a dataset suitable for model training, including feature engineering and data cleaning.
+    """
+    
+    from training_dataset import TrainingDataset
+    try:
+        logger.info("Build the training dataset...")
+        builder = TrainingDataset()
+        object_name = builder.build_training_dataset(cutoff=datetime.now(timezone.utc))
+        return {'status': 'success', 'object_name': object_name}
+    except Exception as e:
+        logger.error("Dataset build failed: %s", str(e), exc_info=True)
+        raise AirflowException(f'Dataset build failed: {str(e)}') from e
+    
 with DAG(
     'fraud_detection_training',
     default_args=default_args,
@@ -120,6 +137,11 @@ with DAG(
         for index in range(INGESTION_WORKER_COUNT)
     ]
 
+    build_training_dataset_task = PythonOperator(
+        task_id="build_training_dataset",
+        python_callable=build_training_dataset,
+    )
+
     training_task = PythonOperator(
         task_id='execute_training',
         python_callable=_train_model,
@@ -131,7 +153,7 @@ with DAG(
         trigger_rule='all_done'  # Ensure cleanup runs regardless of previous task outcomes
     )
 
-    validate_environment >> ingestion_tasks >> training_task >> cleanup_task
+    validate_environment >> ingestion_tasks >> build_training_dataset_task >> training_task >> cleanup_task
 
     # Documentation 
     dag.doc_md = """
