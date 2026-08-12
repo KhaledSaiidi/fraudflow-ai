@@ -43,10 +43,33 @@ def _train_model(**context):
     from fraud_detection_training import FraudDetectionTraining
     try:
         logger.info("Initializing model training...")
-        trainer = FraudDetectionTraining()
-        model, precision = trainer.train_model()
+        task_instance = context.get("ti")
+        dataset_payload = (
+            task_instance.xcom_pull(task_ids="build_training_dataset")
+            if task_instance
+            else None
+        )
+        object_name = (
+            dataset_payload.get("object_name")
+            if isinstance(dataset_payload, dict)
+            else None
+        )
+        if not object_name:
+            raise AirflowException(
+                "Missing object_name from build_training_dataset XCom"
+            )
 
-        return {'status': 'success', 'precision': precision}
+        trainer = FraudDetectionTraining()
+        run_id, precision, experiment_name, register_model_name, artifact_path = trainer.train_model(object_name=object_name)
+
+        return {
+            'status': 'success',
+            'precision': precision,
+            'run_id': run_id,
+            'experiment_name': experiment_name,
+            'register_model_name': register_model_name,
+            'artifact_path': artifact_path
+        }
 
     except Exception as e:
         logger.error("Model training failed: %s", str(e), exc_info=True)
@@ -167,3 +190,4 @@ with DAG(
     - Classifier with precision optimisation
     - MLFLOW for experiment tracking and model versioning
     """
+
