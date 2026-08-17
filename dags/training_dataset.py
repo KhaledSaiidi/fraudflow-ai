@@ -277,34 +277,44 @@ class TrainingDataset:
     _HIGH_RISK_MERCHANTS = {"QuickCash", "GlobalDigital", "FastMoneyX"}
     _SUSPICIOUS_LOCATIONS = {"CN", "RU", "GB"}
 
-    @staticmethod
-    def _create_features(table: pa.Table) -> pa.Table:
-        """Create features for fraud detection."""
-        import math
+
+    def _create_features(self, table: pa.Table) -> pa.Table:
+        """Create model-ready fraud detection features."""
+        import numpy as np
         try:
             frame = table.to_pandas()
+
+            label_column = self.config["training_data"]["label_column"]
+            feature_columns = self.config["features"]
+            frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True)
 
             frame["hour_of_day"] = frame["timestamp"].dt.hour
             frame["day_of_week"] = frame["timestamp"].dt.dayofweek
             frame["is_weekend"] = frame["day_of_week"].isin([5, 6]).astype(int)
-            frame["log_amount"] = frame["amount"].clip(lower=0.01).apply(math.log)
+            frame["log_amount"] = np.log(frame["amount"].clip(lower=0.01))
             frame["is_card_testing"] = (frame["amount"] < 2.0).astype(int)
             frame["is_large_amount"] = (frame["amount"] > 500).astype(int)
             frame["is_very_large_amount"] = (frame["amount"] > 3000).astype(int)
             frame["is_high_risk_merchant"] = frame["merchant"].isin(
-                TrainingDataset._HIGH_RISK_MERCHANTS
+                self._HIGH_RISK_MERCHANTS
             ).astype(int)
-            frame["is_suspicious_location"] = frame["location"].isin(
-                TrainingDataset._SUSPICIOUS_LOCATIONS
-            ).astype(int)
-            frame["is_fraud"] = frame["is_fraud"].astype(int)
 
-            # drop Kafka metadata — not predictive signals
-            frame = frame.drop(
-                columns=["transaction_id", "ingested_at", "kafka_partition", "kafka_offset", "dedup_shard"],
-                errors="ignore",
-            )
-            return pa.Table.from_pandas(frame, preserve_index=False)
+            frame["is_suspicious_location"] = frame["location"].isin(
+                self._SUSPICIOUS_LOCATIONS
+            ).astype(int)
+
+            frame[label_column] = frame[label_column].astype(int)
+
+            output_columns = feature_columns + [label_column]
+
+            missing_columns = sorted(set(output_columns) - set(frame.columns))
+            if missing_columns:
+                raise ValueError(f"Missing training columns: {missing_columns}")
+ 
+            return pa.Table.from_pandas(
+                frame[output_columns],
+                 preserve_index=False,
+                 )
         except Exception as e:
             logger.error("Error creating features: %s", str(e))
             raise
