@@ -5,6 +5,7 @@ import pandas as pd
 import boto3
 import mlflow
 from sklearn.model_selection import train_test_split
+from sqlalchemy import column
 from xgboost import XGBClassifier
 
 from settings import load_config, minio_url, require_credential
@@ -82,6 +83,65 @@ class FraudDetectionTraining:
             logger.error('Failed to load feature parquet from MinIO: %s...', str(e))
             raise
 
+    def _get_training_features(self,
+                               df: pd.DataFrame,
+                               label_column:str,
+                               ) -> tuple[pd.DataFrame, pd.Series]:
+        feature_columns = self.config.get("features")
+
+        if not feature_columns:
+            raise ValueError("Missing features list in config.yaml")
+        missing_features = sorted(set(feature_columns) - set(df.columns))
+        if missing_features:
+            raise ValueError("Missing features list in config.yaml")
+
+        invalid_features = [
+            column
+            for column in feature_columns
+            if not pd.api.types.is_numeric_dtype(df[column])
+        ]
+        if invalid_features:
+            raise ValueError(
+                f"Feature columns must be numeric. Invalid columns: {invalid_features}"
+            )
+
+        x = df[feature_columns]
+        y = df[label_column]
+
+        return x, y
+
+
+    def _validate_training_dataframe(self, df: pd.DataFrame) -> str:
+        if df.empty:
+            raise ValueError("Training dataset is empty")
+
+        label_column = self.config["training_data"]["label_column"]
+
+        if label_column not in df.columns:
+            raise ValueError(
+                f"Training dataset is missing label column: {label_column}"
+            )
+
+        if df[label_column].isna().any():
+            raise ValueError(f"Label column {label_column} contains null values")
+
+        labels = set(df[label_column].unique())
+        invalid_labels = labels - {0, 1}
+
+        if invalid_labels:
+            raise ValueError(
+                f"Label column {label_column} must contain only 0/1 values. "
+                f"Found: {sorted(invalid_labels)}"
+            )
+
+        if len(labels) < 2:
+            raise ValueError(
+                f"Training dataset must contain both classes 0 and 1. "
+                f"Found only: {sorted(labels)}"
+            )
+
+        return label_column
+
     def train_model(self, object_name: str) -> tuple:
         try:
             logger.info("Starting model training...")
@@ -97,10 +157,10 @@ class FraudDetectionTraining:
             with mlflow.start_run() as run:
                 local_file_path = self.load_from_minio(object_name)
                 df = pd.read_parquet(local_file_path)
-                X = df.drop(columns=['is_fraud'])
-                y = df['is_fraud']
-                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
+                label_column = self._validate_training_dataframe(df)
+                X, y = self._get_training_features(df, label_column)
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
                 # Define hyperparameters
                 hyperparameters = {
                     'learning_rate': 0.1,

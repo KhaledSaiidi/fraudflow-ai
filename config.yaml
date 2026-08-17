@@ -52,10 +52,29 @@ airflow:
     retry_delay_seconds: 30
     max_active_runs: 1
 
-# model:
+model:
+  test_size: 0.2
+  random_state: 42
+  threshold_metric: f1
+  xgboost:
+    n_estimators: 300
+    max_depth: 4
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    eval_metric: logloss
 
-
-# features:
-
+features:
+  - amount
+  - user_id
+  - hour_of_day
+  - day_of_week
+  - is_weekend
+  - log_amount
+  - is_card_testing
+  - is_large_amount
+  - is_very_large_amount
+  - is_high_risk_merchant
+  - is_suspicious_location
 
 # spark:
