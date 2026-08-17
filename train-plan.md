@@ -13,43 +13,26 @@
 
 ## Priority Plan
 
-### 1. Fix Training Correctness
+~~### 1. Fix Training Correctness~~
 
-- Validate the dataset and label column.
-- Fail clearly if labels contain only one class.
-- Use an explicit feature list instead of `df.drop(...)`.
-- Drop or encode raw categorical/time columns.
-- Use stratified train/test split.
-- Use `sklearn.metrics` for evaluation.
+~~- Validate the dataset and label column.~~
+~~- Fail clearly if labels contain only one class.~~
+~~- Use an explicit feature list instead of `df.drop(...)`.~~
+~~- Drop or encode raw categorical/time columns.~~
+~~- Use stratified train/test split.~~
+~~- Use `sklearn.metrics` for evaluation.~~
 
-### 2. Make Features Explicit
+~~### 2. Make Features Explicit~~
 
-Add model feature configuration:
+~~Add model feature configuration:~~
 
-```yaml
-model:
-  label_column: is_fraud
-  feature_columns:
-    - amount
-    - user_id
-    - hour_of_day
-    - day_of_week
-    - is_weekend
-    - log_amount
-    - is_card_testing
-    - is_large_amount
-    - is_very_large_amount
-    - is_high_risk_merchant
-    - is_suspicious_location
-```
+~~Training should only use configured columns and fail if any are missing.~~
 
-Training should only use configured columns and fail if any are missing.
+~~### 3. Handle Class Imbalance~~
 
-### 3. Handle Class Imbalance
-
-- Compute `scale_pos_weight = negative_count / positive_count`.
-- Pass it to `XGBClassifier`.
-- Log class counts and fraud rate to MLflow.
+~~- Compute `scale_pos_weight = negative_count / positive_count`.~~
+~~- Pass it to `XGBClassifier`.~~
+~~- Log class counts and fraud rate to MLflow.~~
 
 ### 4. Improve Evaluation
 

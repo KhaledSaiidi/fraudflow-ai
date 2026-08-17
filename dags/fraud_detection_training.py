@@ -5,6 +5,7 @@ import pandas as pd
 import boto3
 import mlflow
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import precision_score, recall_score, f1_score
 from sqlalchemy import column
 from xgboost import XGBClassifier
 
@@ -167,13 +168,23 @@ class FraudDetectionTraining:
                     random_state=self.config["model"]["random_state"],
                     stratify=y,
                     )
+                negative_count = int((y_train == 0).sum())
+                positive_count = int((y_train == 1).sum())
+                scale_pos_weight = negative_count / positive_count
+
                 # Define hyperparameters
                 hyperparameters = {
+                    'scale_pos_weight': scale_pos_weight,
                     'learning_rate': 0.1,
                     'n_estimators': 100,
                     'max_depth': 5,
                     'random_state': 42
                 }
+                mlflow.log_metric("negative_count", negative_count)
+                mlflow.log_metric("positive_count", positive_count)
+                mlflow.log_metric("fraud_rate", positive_count / len(y_train))
+                mlflow.log_param("scale_pos_weight", scale_pos_weight)
+
                 mlflow.log_param("n_estimators", hyperparameters['n_estimators'])
                 mlflow.log_param("max_depth", hyperparameters['max_depth'])
                 mlflow.log_param("learning_rate", hyperparameters['learning_rate'])
@@ -186,11 +197,14 @@ class FraudDetectionTraining:
                 logger.info("Model training completed and logged to MLflow.")
 
                 predictions = model.predict(X_test)
-                if predictions.sum() == 0:
-                    precision = 0.0
-                else:
-                    precision = (predictions & y_test).sum() / predictions.sum()
+
+                precision = float(precision_score(y_test, predictions, zero_division=0))
+                recall = float(recall_score(y_test, predictions, zero_division=0))
+                f1 = float(f1_score(y_test, predictions, zero_division=0))
+
                 mlflow.log_metric("precision", precision)
+                mlflow.log_metric("recall", recall)
+                mlflow.log_metric("f1", f1)
 
                 logger.info("Model prediction completed successfully.")
 
