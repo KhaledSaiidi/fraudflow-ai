@@ -60,15 +60,15 @@ def _train_model(**context):
             )
 
         trainer = FraudDetectionTraining()
-        run_id, precision, experiment_name, register_model_name, artifact_path = trainer.train_model(object_name=object_name)
+        precision, experiment_name, register_model_name, artifact_path, model_uri = trainer.train_model(object_name=object_name)
 
         return {
             'status': 'success',
             'precision': precision,
-            'run_id': run_id,
             'experiment_name': experiment_name,
             'register_model_name': register_model_name,
-            'artifact_path': artifact_path
+            'artifact_path': artifact_path,
+            'model_uri': model_uri
         }
 
     except Exception as e:

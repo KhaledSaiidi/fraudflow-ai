@@ -3,6 +3,8 @@ import os
 import pandas as pd
 import boto3
 import mlflow
+from mlflow import xgboost as mlflow_xgboost
+from mlflow.models import infer_signature
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     average_precision_score,
@@ -194,6 +196,17 @@ class FraudDetectionTraining:
                 model = XGBClassifier(**hyperparameters)
                 model.fit(X_train, y_train)
 
+                input_example = X_train.head(5)
+                signature = infer_signature(X_train, model.predict(X_train))
+
+                mlflow_xgboost.log_model(
+                    xgb_model=model,
+                    artifact_path=artifact_path,
+                    registered_model_name=register_model_name,
+                    signature=signature,
+                    input_example=input_example,
+                )
+
                 logger.info("Model training completed and logged to MLflow.")
 
                 predictions = model.predict(X_test)
@@ -213,8 +226,10 @@ class FraudDetectionTraining:
                 mlflow.log_metric("average_precision", average_precision)
 
                 logger.info("Model prediction completed successfully.")
+                model_uri = f"runs:/{run.info.run_id}/{artifact_path}"
+                logger.info("Model URI: %s", model_uri)
 
-                return run.info.run_id, precision, experiment_name, register_model_name, artifact_path
+                return precision, experiment_name, register_model_name, artifact_path, model_uri
             
         except Exception as e:
             logger.error("Model training failed: %s", str(e), exc_info=True)
