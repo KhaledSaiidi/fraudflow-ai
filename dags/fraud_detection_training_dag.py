@@ -193,16 +193,27 @@ with DAG(
     build_training_dataset_task >> training_task
     training_task >> cleanup_task
 
-    # Documentation 
+     # Documentation
     dag.doc_md = """
     # Fraud Detection Model Training DAG
-    This DAG is responsible for training the fraud detection model. It performs the following steps:
+     This DAG orchestrates ingestion, dataset building, and model training.
+
+     It performs the following steps:
     1. **Validate Environment**: Checks for the presence of required configuration files.
-    2. **Execute Training**: Runs the model training process.
-    3. **Cleanup**: Cleans up temporary files after training.
-    Daily Training of fraud detection use: 
-    - Transactions data from Kafka
-    - Classifier with precision optimisation
-    - MLFLOW for experiment tracking and model versioning
+     2. **Ingest Transactions**: Runs parallel Kafka consumers (`ingest_transactions_0..N`).
+     3. **Build Training Dataset**: Loads and deduplicates shard data, then creates model features.
+     4. **Execute Training**: Trains XGBoost, logs metrics, logs model artifact, registers model,
+         and updates registry alias.
+     5. **Cleanup**: Cleans up temporary files after workflow completion.
+
+     Outputs from `execute_training` include:
+     - `logged_model_uri`
+     - `model_registered_uri`
+     - `model_alias_uri`
+
+     The DAG runs on the configured schedule and uses MLflow for experiment tracking and
+     model registry management.
     """
 
+# - Add model promotion rules.
+# - Add real-time inference for `fraud_predictions`.

@@ -12,13 +12,19 @@ Implemented now:
 - Kafka ingestion pipeline with validation, partition-aware consumption, deduplication, and Parquet output
 - Airflow DAG that orchestrates ingestion, dataset building, and training task execution
 - Training dataset builder with feature engineering and MinIO persistence
+- Model training with XGBoost using stratified train/test split
+- Class imbalance handling with `scale_pos_weight`
+- MLflow model logging with signature and input example
+- MLflow model registration to `fraud_detection` and alias assignment from config
+- Training metrics logging: `precision`, `recall`, `f1`, `roc_auc`, `average_precision`
 - Full local infrastructure in Docker Compose (Airflow + Kafka + MinIO + MLflow)
 
 Not implemented yet:
 
-- Real model training logic in `dags/fraud_detection_training.py` (`train_model` is still a stub)
 - Real-time inference consumer for `fraud_predictions`
 - Monitoring dashboards and drift detection
+- Time-based validation split for model evaluation
+- Focused automated tests for training logic
 
 ## Repository Layout
 
@@ -53,7 +59,7 @@ Airflow DAG: fraud_detection_training (daily)
   1) validate_environment
   2) ingest_transactions_0..2 (parallel)
   3) build_training_dataset
-  4) execute_training (currently stubbed)
+  4) execute_training
   5) cleanup
         |
         v
@@ -119,7 +125,22 @@ The target label is `is_fraud`.
 
 ### 4) Model Training
 
-`dags/fraud_detection_training.py` has infrastructure scaffolding (MinIO checks, MLflow setup) but `train_model` currently returns hardcoded values.
+`dags/fraud_detection_training.py` trains an `XGBClassifier` using configured features,
+logs hyperparameters and metrics to MLflow, logs/registers the model, and manages
+registry aliasing.
+
+The training task currently returns the following model references:
+
+- `logged_model_uri` (URI returned by `mlflow.log_model`)
+- `model_registered_uri` (`models:/fraud_detection/<version>`)
+- `model_alias_uri` (`models:/fraud_detection@<alias>`)
+
+Training safeguards include:
+
+- empty dataset validation
+- label validation (must be binary and contain both classes)
+- configured feature validation (must exist and be numeric)
+- registry version polling with timeout for eventual consistency
 
 ## Airflow DAG
 
@@ -206,7 +227,9 @@ docker logs -f airflow-worker
 
 ## Roadmap
 
-- Implement `train_model` end-to-end (load dataset, train, evaluate, log to MLflow, register model)
+- Add focused tests for feature selection, validation failures, class weighting, and threshold behavior
+- Implement explicit threshold-selection logic based on configured objective
+- Add time-based validation split alongside random split metrics
 - Add inference service consuming `fraud_predictions`
 - Add metrics/observability and drift detection
 - Add automated retraining strategy
