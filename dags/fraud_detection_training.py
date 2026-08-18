@@ -1,9 +1,22 @@
 import logging
 import os
+import pandas as pd
 import boto3
 import mlflow
-
+from mlflow import xgboost as mlflow_xgboost
+from mlflow.tracking import MlflowClient
+from mlflow.models import infer_signature
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    average_precision_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
+from xgboost import XGBClassifier
 from settings import load_config, minio_url, require_credential
+import time
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
@@ -60,21 +73,223 @@ class FraudDetectionTraining:
             logger.error('Minio Connection failed: %s...', str(e))
             raise
 
-    def train_model(self) -> tuple:
+    def load_from_minio(self, object_name: str) -> str:
+        try:
+            s3 = boto3.client(
+                's3',
+                endpoint_url=minio_url(self.config),
+                aws_access_key_id=require_credential("AWS_ACCESS_KEY_ID"),
+                aws_secret_access_key=require_credential("AWS_SECRET_ACCESS_KEY"),
+            )
+            bucket_name = self.config["minio"]["buckets"]["fraud_features"]
+            local_file_path = '/tmp/features.parquet'
+
+            s3.download_file(bucket_name, object_name, local_file_path)
+            logger.info('Downloaded feature parquet from MinIO: %s/%s', bucket_name, object_name)
+            return local_file_path
+        except Exception as e:
+            logger.error('Failed to load feature parquet from MinIO: %s...', str(e))
+            raise
+
+    def _get_training_features(self,
+                               df: pd.DataFrame,
+                               label_column:str,
+                               ) -> tuple[pd.DataFrame, pd.Series]:
+        feature_columns = self.config.get("features")
+
+        if not feature_columns:
+            raise ValueError("Missing features list in config.yaml")
+        missing_features = sorted(set(feature_columns) - set(df.columns))
+        if missing_features:
+            raise ValueError(
+                "Training dataset is missing configured feature columns: "
+                f"{missing_features}"
+            )
+
+        invalid_features = [
+            column
+            for column in feature_columns
+            if not pd.api.types.is_numeric_dtype(df[column])
+        ]
+        if invalid_features:
+            raise ValueError(
+                f"Feature columns must be numeric. Invalid columns: {invalid_features}"
+            )
+
+        x = df[feature_columns]
+        y = df[label_column]
+
+        return x, y
+
+
+    def _validate_training_dataframe(self, df: pd.DataFrame) -> str:
+        if df.empty:
+            raise ValueError("Training dataset is empty")
+
+        label_column = self.config["training_data"]["label_column"]
+
+        if label_column not in df.columns:
+            raise ValueError(
+                f"Training dataset is missing label column: {label_column}"
+            )
+
+        if df[label_column].isna().any():
+            raise ValueError(f"Label column {label_column} contains null values")
+
+        labels = set(df[label_column].unique())
+        invalid_labels = labels - {0, 1}
+
+        if invalid_labels:
+            raise ValueError(
+                f"Label column {label_column} must contain only 0/1 values. "
+                f"Found: {sorted(invalid_labels)}"
+            )
+
+        if len(labels) < 2:
+            raise ValueError(
+                f"Training dataset must contain both classes 0 and 1. "
+                f"Found only: {sorted(labels)}"
+            )
+
+        return label_column
+
+    def _wait_for_registered_version(
+        self,
+        client,
+        model_name: str,
+        run_id: str,
+    ) -> int:
+        timeout_seconds = self.config['model']['timeout_seconds']
+        poll_interval_seconds = self.config['model']['poll_interval_seconds']
+        deadline = time.time() + timeout_seconds
+
+        while time.time() < deadline:
+            versions = client.search_model_versions(
+                f"name='{model_name}'"
+            )
+            matches = [
+                v for v in versions
+                if getattr(v, "run_id", None) == run_id
+            ]
+            if matches:
+                return max(int(v.version) for v in matches)
+            time.sleep(poll_interval_seconds)
+        raise RuntimeError(
+            f"Timed out waiting for registered model version for run_id={run_id}"
+        )
+
+    def train_model(self, object_name: str) -> tuple:
         try:
             logger.info("Starting model training...")
-            model = "trained_model"
-            precision = 0.95
-            logger.info("Model training completed successfully.")
-            return model, precision
+
+            experiment_name = self.config['mlflow']['experiment_name']
+            register_model_name = self.config['mlflow']['register_model_name']
+            tracking_uri = self.config['mlflow']['tracking_uri']
+            artifact_path = self.config['mlflow']['artifact_path']
+
+            mlflow.set_tracking_uri(tracking_uri)
+            mlflow.set_experiment(experiment_name)
+
+            with mlflow.start_run() as run:
+                model_config = self.config["model"]
+                xgboost_config = dict(model_config["xgboost"])
+
+                local_file_path = self.load_from_minio(object_name)
+                df = pd.read_parquet(local_file_path)
+
+                label_column = self._validate_training_dataframe(df)
+                X, y = self._get_training_features(df, label_column)
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X,
+                    y,
+                    test_size=model_config["test_size"],
+                    random_state=model_config["random_state"],
+                    stratify=y,
+                    )
+                negative_count = int((y_train == 0).sum())
+                positive_count = int((y_train == 1).sum())
+                scale_pos_weight = negative_count / positive_count
+
+                hyperparameters = {
+                    **xgboost_config,
+                    "random_state": model_config["random_state"],
+                    "scale_pos_weight": scale_pos_weight,
+                }
+                mlflow.log_metric("negative_count", negative_count)
+                mlflow.log_metric("positive_count", positive_count)
+                mlflow.log_metric("fraud_rate", positive_count / len(y_train))
+                mlflow.log_param("test_size", model_config["test_size"])
+                for param_name, param_value in hyperparameters.items():
+                    mlflow.log_param(param_name, param_value)
+
+                # Train the model
+                model = XGBClassifier(**hyperparameters)
+                model.fit(X_train, y_train)
+
+                input_example = X_train.head(5)
+                signature = infer_signature(X_train, model.predict(X_train))
+                await_registration_for = self.config['model']['await_registration_for']
+
+                logged_model = mlflow_xgboost.log_model(
+                                xgb_model=model,
+                                artifact_path=artifact_path,
+                                registered_model_name=register_model_name,
+                                signature=signature,
+                                input_example=input_example,
+                                await_registration_for=await_registration_for,
+                            )
+                logger.info("Model training completed and logged to MLflow.")
+
+                logged_model_uri = logged_model.model_uri
+                logger.info(
+                    "Logged model URI returned by mlflow.log_model: %s",
+                    logged_model_uri,
+                )
+
+                client = MlflowClient()
+                model_version = self._wait_for_registered_version(
+                    client=client,
+                    model_name=register_model_name,
+                    run_id=run.info.run_id,
+                )
+
+                model_registered_uri = f"models:/{register_model_name}/{model_version}"
+                alias_name = self.config['mlflow']['model_alias_name']
+                client.set_registered_model_alias(
+                    name=register_model_name,
+                    alias=alias_name,
+                    version=str(model_version)
+                )
+
+                model_alias_uri = f"models:/{register_model_name}@{alias_name}"
+                logger.info("Model Alias URI: %s", model_alias_uri)
+
+                predictions = model.predict(X_test)
+                prediction_scores = model.predict_proba(X_test)[:, 1]
+
+                precision = float(precision_score(y_test, predictions, zero_division=0))
+                recall = float(recall_score(y_test, predictions, zero_division=0))
+                f1 = float(f1_score(y_test, predictions, zero_division=0))
+
+                roc_auc = float(roc_auc_score(y_test, prediction_scores))
+                average_precision = float(average_precision_score(y_test, prediction_scores))
+
+                mlflow.log_metric("precision", precision)
+                mlflow.log_metric("recall", recall)
+                mlflow.log_metric("f1", f1)
+                mlflow.log_metric("roc_auc", roc_auc)
+                mlflow.log_metric("average_precision", average_precision)
+
+                logger.info("Model prediction completed successfully.")
+
+                return precision, \
+                    experiment_name, \
+                    register_model_name, \
+                    artifact_path, \
+                    logged_model_uri, \
+                    model_registered_uri, \
+                    model_alias_uri
+            
         except Exception as e:
             logger.error("Model training failed: %s", str(e), exc_info=True)
             raise
-
-# What train_model needs to do:
-# Load the feature parquet from MinIO (fraud-features bucket, {version}/features-{date}.parquet) — the object name comes from build_training_dataset's return value, which the DAG currently discards (XCom could pass it)
-# Split into X (features) / y (is_fraud) and train/test split
-# Train a LightGBM or CatBoost classifier
-# Log metrics (precision, recall, roc_auc) + the model to MLflow
-# Register the model in MLflow model registry
-# Should

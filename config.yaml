@@ -3,6 +3,7 @@ mlflow:
   register_model_name: "fraud_detection"
   tracking_uri: "http://mlflow-server:5500"
   artifact_path: "fraud_detection"
+  model_alias_name: "prod"
 
 minio:
   endpoint: "minio:9000"
@@ -52,10 +53,32 @@ airflow:
     retry_delay_seconds: 30
     max_active_runs: 1
 
-# model:
+model:
+  test_size: 0.2
+  random_state: 42
+  threshold_metric: f1
+  timeout_seconds: 90
+  poll_interval_seconds: 2
+  await_registration_for: 60
+  xgboost:
+    n_estimators: 300
+    max_depth: 4
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    eval_metric: logloss
 
-
-# features:
-
+features:
+  - amount
+  - user_id
+  - hour_of_day
+  - day_of_week
+  - is_weekend
+  - log_amount
+  - is_card_testing
+  - is_large_amount
+  - is_very_large_amount
+  - is_high_risk_merchant
+  - is_suspicious_location
 
 # spark:
