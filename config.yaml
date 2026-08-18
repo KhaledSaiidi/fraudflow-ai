@@ -3,6 +3,7 @@ mlflow:
   register_model_name: "fraud_detection"
   tracking_uri: "http://mlflow-server:5500"
   artifact_path: "fraud_detection"
+  model_alias_name: "prod"
 
 minio:
   endpoint: "minio:9000"

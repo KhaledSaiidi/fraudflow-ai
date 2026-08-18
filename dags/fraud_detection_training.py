@@ -4,6 +4,7 @@ import pandas as pd
 import boto3
 import mlflow
 from mlflow import xgboost as mlflow_xgboost
+from mlflow.tracking import MlflowClient
 from mlflow.models import infer_signature
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
@@ -199,15 +200,43 @@ class FraudDetectionTraining:
                 input_example = X_train.head(5)
                 signature = infer_signature(X_train, model.predict(X_train))
 
-                mlflow_xgboost.log_model(
-                    xgb_model=model,
-                    artifact_path=artifact_path,
-                    registered_model_name=register_model_name,
-                    signature=signature,
-                    input_example=input_example,
+                logged_model = mlflow_xgboost.log_model(
+                                xgb_model=model,
+                                artifact_path=artifact_path,
+                                registered_model_name=register_model_name,
+                                signature=signature,
+                                input_example=input_example,
+                            )
+                logger.info("Model training completed and logged to MLflow.")
+
+                logged_model_uri = logged_model.model_uri
+                logger.info("Model Run URI: %s", logged_model_uri)
+
+                client = MlflowClient()
+                versions = client.search_model_versions(
+                    f"name='{register_model_name}'"
+                )
+                matching_versions = [
+                    v for v in versions
+                    if getattr(v, 'run_id', None) == run.info.run_id
+                ]
+                if not matching_versions:
+                    raise RuntimeError(
+                        f"No registered model version found for run_id: {run.info.run_id}"
+                    )
+
+                model_version = max(int(v.version) for v in matching_versions)
+                model_registered_uri = f"models:/{register_model_name}/{model_version}"
+
+                alias_name = self.config['mlflow']['model_alias_name']
+                client.set_registered_model_alias(
+                    name=register_model_name,
+                    alias=alias_name,
+                    version=str(model_version)
                 )
 
-                logger.info("Model training completed and logged to MLflow.")
+                model_alias_uri = f"models:/{register_model_name}@{alias_name}"
+                logger.info("Model Alias URI: %s", model_alias_uri)
 
                 predictions = model.predict(X_test)
                 prediction_scores = model.predict_proba(X_test)[:, 1]
@@ -226,10 +255,14 @@ class FraudDetectionTraining:
                 mlflow.log_metric("average_precision", average_precision)
 
                 logger.info("Model prediction completed successfully.")
-                model_uri = f"runs:/{run.info.run_id}/{artifact_path}"
-                logger.info("Model URI: %s", model_uri)
 
-                return precision, experiment_name, register_model_name, artifact_path, model_uri
+                return precision, \
+                    experiment_name, \
+                    register_model_name, \
+                    artifact_path, \
+                    logged_model_uri, \
+                    model_registered_uri, \
+                    model_alias_uri
             
         except Exception as e:
             logger.error("Model training failed: %s", str(e), exc_info=True)

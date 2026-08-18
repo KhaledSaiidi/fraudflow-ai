@@ -3,7 +3,8 @@ import logging
 
 from airflow.sdk import DAG
 from airflow.providers.standard.operators.python import PythonOperator
-from airflow.providers.standard.operators.bash import AirflowException, BashOperator
+from airflow.providers.standard.operators.bash import BashOperator
+from airflow.sdk.exceptions import AirflowException
 
 from settings import load_config
 
@@ -60,7 +61,16 @@ def _train_model(**context):
             )
 
         trainer = FraudDetectionTraining()
-        precision, experiment_name, register_model_name, artifact_path, model_uri = trainer.train_model(object_name=object_name)
+        training_results = trainer.train_model(object_name=object_name)
+        (
+            precision, 
+            experiment_name, 
+            register_model_name, 
+            artifact_path, 
+            logged_model_uri, 
+            model_registered_uri, 
+            model_alias_uri
+        ) = training_results
 
         return {
             'status': 'success',
@@ -68,7 +78,9 @@ def _train_model(**context):
             'experiment_name': experiment_name,
             'register_model_name': register_model_name,
             'artifact_path': artifact_path,
-            'model_uri': model_uri
+            'logged_model_uri': logged_model_uri,
+            'model_registered_uri': model_registered_uri,
+            'model_alias_uri': model_alias_uri
         }
 
     except Exception as e:

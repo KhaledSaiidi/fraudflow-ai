@@ -45,12 +45,12 @@
 
 ~~Use predicted probabilities and tune the classification threshold, probably for best F1 or minimum recall.~~
 
-### 5. Log and Register the Model
+~~### 5. Log and Register the Model~~
 
-- Log the trained XGBoost model to MLflow.
-- Include model signature and input example.
-- Register the model as `fraud_detection`.
-- Return the real `model_uri` from the Airflow task.
+~~- Log the trained XGBoost model to MLflow.~~
+~~- Include model signature and input example.~~
+~~- Register the model as `fraud_detection`.~~
+~~- Return the real `model_uri` from the Airflow task.~~
 
 ~~### 6. Move Parameters to Config~~
 ~~model test_size random_state threshold_metric xgboost: n_estimators max_depth learning_rate subsample colsample_bytree eval_metric~~
