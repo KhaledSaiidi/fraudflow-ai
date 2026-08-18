@@ -52,21 +52,8 @@
 - Register the model as `fraud_detection`.
 - Return the real `model_uri` from the Airflow task.
 
-### 6. Move Parameters to Config
-
-```yaml
-model:
-  test_size: 0.2
-  random_state: 42
-  threshold_metric: f1
-  xgboost:
-    n_estimators: 300
-    max_depth: 4
-    learning_rate: 0.05
-    subsample: 0.8
-    colsample_bytree: 0.8
-    eval_metric: logloss
-```
+~~### 6. Move Parameters to Config~~
+~~model test_size random_state threshold_metric xgboost: n_estimators max_depth learning_rate subsample colsample_bytree eval_metric~~
 
 ### 7. Add Focused Tests
 

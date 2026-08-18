@@ -159,6 +159,9 @@ class FraudDetectionTraining:
             mlflow.set_experiment(experiment_name)
 
             with mlflow.start_run() as run:
+                model_config = self.config["model"]
+                xgboost_config = dict(model_config["xgboost"])
+
                 local_file_path = self.load_from_minio(object_name)
                 df = pd.read_parquet(local_file_path)
 
@@ -167,31 +170,25 @@ class FraudDetectionTraining:
                 X_train, X_test, y_train, y_test = train_test_split(
                     X,
                     y,
-                    test_size=self.config["model"]["test_size"],
-                    random_state=self.config["model"]["random_state"],
+                    test_size=model_config["test_size"],
+                    random_state=model_config["random_state"],
                     stratify=y,
                     )
                 negative_count = int((y_train == 0).sum())
                 positive_count = int((y_train == 1).sum())
                 scale_pos_weight = negative_count / positive_count
 
-                # Define hyperparameters
                 hyperparameters = {
-                    'scale_pos_weight': scale_pos_weight,
-                    'learning_rate': 0.1,
-                    'n_estimators': 100,
-                    'max_depth': 5,
-                    'random_state': 42
+                    **xgboost_config,
+                    "random_state": model_config["random_state"],
+                    "scale_pos_weight": scale_pos_weight,
                 }
                 mlflow.log_metric("negative_count", negative_count)
                 mlflow.log_metric("positive_count", positive_count)
                 mlflow.log_metric("fraud_rate", positive_count / len(y_train))
-                mlflow.log_param("scale_pos_weight", scale_pos_weight)
-
-                mlflow.log_param("n_estimators", hyperparameters['n_estimators'])
-                mlflow.log_param("max_depth", hyperparameters['max_depth'])
-                mlflow.log_param("learning_rate", hyperparameters['learning_rate'])
-                mlflow.log_param("random_state", hyperparameters['random_state'])
+                mlflow.log_param("test_size", model_config["test_size"])
+                for param_name, param_value in hyperparameters.items():
+                    mlflow.log_param(param_name, param_value)
 
                 # Train the model
                 model = XGBClassifier(**hyperparameters)
