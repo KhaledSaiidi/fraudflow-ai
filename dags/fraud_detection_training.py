@@ -101,7 +101,10 @@ class FraudDetectionTraining:
             raise ValueError("Missing features list in config.yaml")
         missing_features = sorted(set(feature_columns) - set(df.columns))
         if missing_features:
-            raise ValueError("Missing features list in config.yaml")
+            raise ValueError(
+                "Training dataset is missing configured feature columns: "
+                f"{missing_features}"
+            )
 
         invalid_features = [
             column
@@ -238,7 +241,10 @@ class FraudDetectionTraining:
                 logger.info("Model training completed and logged to MLflow.")
 
                 logged_model_uri = logged_model.model_uri
-                logger.info("Model Run URI: %s", logged_model_uri)
+                logger.info(
+                    "Logged model URI returned by mlflow.log_model: %s",
+                    logged_model_uri,
+                )
 
                 client = MlflowClient()
                 model_version = self._wait_for_registered_version(

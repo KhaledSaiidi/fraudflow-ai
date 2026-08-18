@@ -188,7 +188,10 @@ with DAG(
         trigger_rule='all_done'  # Ensure cleanup runs regardless of previous task outcomes
     )
 
-    validate_environment >> ingestion_tasks >> build_training_dataset_task >> training_task >> cleanup_task
+    validate_environment >> ingestion_tasks
+    ingestion_tasks >> build_training_dataset_task
+    build_training_dataset_task >> training_task
+    training_task >> cleanup_task
 
     # Documentation 
     dag.doc_md = """
