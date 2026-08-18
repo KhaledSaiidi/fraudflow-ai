@@ -34,19 +34,16 @@
 ~~- Pass it to `XGBClassifier`.~~
 ~~- Log class counts and fraud rate to MLflow.~~
 
-### 4. Improve Evaluation
+~~### 4. Improve Evaluation~~
+~~Log these metrics:~~
 
-Log these metrics:
+~~- `precision`~~
+~~- `recall`~~
+~~- `f1`~~
+~~- `roc_auc`~~
+~~- `average_precision`~~
 
-- `precision`
-- `recall`
-- `f1`
-- `roc_auc`
-- `average_precision`
-- confusion matrix
-- classification report
-
-Use predicted probabilities and tune the classification threshold, probably for best F1 or minimum recall.
+~~Use predicted probabilities and tune the classification threshold, probably for best F1 or minimum recall.~~
 
 ### 5. Log and Register the Model
 

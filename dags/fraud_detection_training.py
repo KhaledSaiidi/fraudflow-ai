@@ -1,14 +1,17 @@
 import logging
 import os
-import mlflow.sklearn
 import pandas as pd
 import boto3
 import mlflow
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import precision_score, recall_score, f1_score
-from sqlalchemy import column
+from sklearn.metrics import (
+    average_precision_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from xgboost import XGBClassifier
-
 from settings import load_config, minio_url, require_credential
 
 logging.basicConfig(
@@ -197,14 +200,20 @@ class FraudDetectionTraining:
                 logger.info("Model training completed and logged to MLflow.")
 
                 predictions = model.predict(X_test)
+                prediction_scores = model.predict_proba(X_test)[:, 1]
 
                 precision = float(precision_score(y_test, predictions, zero_division=0))
                 recall = float(recall_score(y_test, predictions, zero_division=0))
                 f1 = float(f1_score(y_test, predictions, zero_division=0))
 
+                roc_auc = float(roc_auc_score(y_test, prediction_scores))
+                average_precision = float(average_precision_score(y_test, prediction_scores))
+
                 mlflow.log_metric("precision", precision)
                 mlflow.log_metric("recall", recall)
                 mlflow.log_metric("f1", f1)
+                mlflow.log_metric("roc_auc", roc_auc)
+                mlflow.log_metric("average_precision", average_precision)
 
                 logger.info("Model prediction completed successfully.")
 
