@@ -16,6 +16,7 @@ from sklearn.metrics import (
 )
 from xgboost import XGBClassifier
 from settings import load_config, minio_url, require_credential
+import time
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
@@ -149,6 +150,31 @@ class FraudDetectionTraining:
 
         return label_column
 
+    def _wait_for_registered_version(
+        self,
+        client,
+        model_name: str,
+        run_id: str,
+    ) -> int:
+        timeout_seconds = self.config['model']['timeout_seconds']
+        poll_interval_seconds = self.config['model']['poll_interval_seconds']
+        deadline = time.time() + timeout_seconds
+
+        while time.time() < deadline:
+            versions = client.search_model_versions(
+                f"name='{model_name}'"
+            )
+            matches = [
+                v for v in versions
+                if getattr(v, "run_id", None) == run_id
+            ]
+            if matches:
+                return max(int(v.version) for v in matches)
+            time.sleep(poll_interval_seconds)
+        raise RuntimeError(
+            f"Timed out waiting for registered model version for run_id={run_id}"
+        )
+
     def train_model(self, object_name: str) -> tuple:
         try:
             logger.info("Starting model training...")
@@ -199,6 +225,7 @@ class FraudDetectionTraining:
 
                 input_example = X_train.head(5)
                 signature = infer_signature(X_train, model.predict(X_train))
+                await_registration_for = self.config['model']['await_registration_for']
 
                 logged_model = mlflow_xgboost.log_model(
                                 xgb_model=model,
@@ -206,6 +233,7 @@ class FraudDetectionTraining:
                                 registered_model_name=register_model_name,
                                 signature=signature,
                                 input_example=input_example,
+                                await_registration_for=await_registration_for,
                             )
                 logger.info("Model training completed and logged to MLflow.")
 
@@ -213,21 +241,13 @@ class FraudDetectionTraining:
                 logger.info("Model Run URI: %s", logged_model_uri)
 
                 client = MlflowClient()
-                versions = client.search_model_versions(
-                    f"name='{register_model_name}'"
+                model_version = self._wait_for_registered_version(
+                    client=client,
+                    model_name=register_model_name,
+                    run_id=run.info.run_id,
                 )
-                matching_versions = [
-                    v for v in versions
-                    if getattr(v, 'run_id', None) == run.info.run_id
-                ]
-                if not matching_versions:
-                    raise RuntimeError(
-                        f"No registered model version found for run_id: {run.info.run_id}"
-                    )
 
-                model_version = max(int(v.version) for v in matching_versions)
                 model_registered_uri = f"models:/{register_model_name}/{model_version}"
-
                 alias_name = self.config['mlflow']['model_alias_name']
                 client.set_registered_model_alias(
                     name=register_model_name,

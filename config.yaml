@@ -57,6 +57,9 @@ model:
   test_size: 0.2
   random_state: 42
   threshold_metric: f1
+  timeout_seconds: 90
+  poll_interval_seconds: 2
+  await_registration_for: 60
   xgboost:
     n_estimators: 300
     max_depth: 4
